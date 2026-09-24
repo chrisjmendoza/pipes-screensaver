@@ -11,6 +11,7 @@ namespace Pipes;
 /// Development extras:
 ///   /w                          run in a normal window (Esc to quit)
 ///   /shot &lt;file.png&gt; [seconds] [width] [height] [seed]   render one frame offscreen and exit
+///   /bench &lt;report.txt&gt; [frames] [width] [height]         time rendering offscreen, write ms/frame
 /// </summary>
 internal static class Program
 {
@@ -39,6 +40,9 @@ internal static class Program
                 case "shot":
                     Screenshot(args, settings);
                     break;
+                case "bench":
+                    Benchmark(args, settings);
+                    break;
                 default: // "c", no arguments, or anything unrecognised
                     ApplicationConfiguration.Initialize();
                     Application.Run(new ConfigForm(settings));
@@ -46,7 +50,7 @@ internal static class Program
             }
             return 0;
         }
-        catch (Exception ex) when (command != "shot")
+        catch (Exception ex) when (command is not ("shot" or "bench"))
         {
             // A screensaver has no console; surface failures instead of silently showing nothing.
             MessageBox.Show(ex.Message, "Pipes screensaver", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -71,6 +75,18 @@ internal static class Program
 
         using var host = GLHost.CreateOffscreen();
         host.Screenshot(settings, width, height, seconds, path, seed);
+    }
+
+    private static void Benchmark(string[] args, PipesSettings settings)
+    {
+        string At(int i, string fallback) => args.Length > i ? args[i] : fallback;
+        var path = Path.GetFullPath(At(1, "bench.txt"));
+        var frames = int.Parse(At(2, "300"), CultureInfo.InvariantCulture);
+        var width = int.Parse(At(3, "1920"), CultureInfo.InvariantCulture);
+        var height = int.Parse(At(4, "1080"), CultureInfo.InvariantCulture);
+
+        using var host = GLHost.CreateOffscreen();
+        host.Benchmark(settings, width, height, frames, path);
     }
 
     /// <summary>Accepts "/s", "-S", "/p 1234", "/p:1234", "/c:1234".</summary>

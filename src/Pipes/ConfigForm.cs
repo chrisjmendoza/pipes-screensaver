@@ -19,6 +19,7 @@ internal sealed class ConfigForm : Form
     private readonly CheckBox _fittings = Check("Valves, couplings, flanges and junctions");
     private readonly CheckBox _teapots = Check("Rare teapots (like the original)");
 
+    private readonly ComboBox _style = Dropdown("Modern", "Classic (lite, like the original)");
     private readonly ComboBox _aa = Dropdown("Off", "2x", "4x", "8x");
     private readonly CheckBox _ao = Check("Ambient occlusion (soft contact shadows)");
     private readonly CheckBox _bloom = Check("Bloom (glow on highlights)");
@@ -66,6 +67,7 @@ internal sealed class ConfigForm : Form
         Row("", _teapots);
 
         Heading("Graphics");
+        Row("Style", _style);
         Row("Anti-aliasing", _aa);
         Row("", _ao);
         Row("", _bloom);
@@ -93,6 +95,34 @@ internal sealed class ConfigForm : Form
         Controls.Add(layout);
 
         LoadFrom(settings);
+
+        // Hooked up after loading, so opening the dialog doesn't count as the user picking a style.
+        _style.SelectedIndexChanged += (_, _) =>
+        {
+            if (_style.SelectedIndex == (int)GraphicsStyle.Classic) UseClassicPipes();
+            UpdateEffectToggles();
+        };
+    }
+
+    /// <summary>
+    /// Picking the classic style also sets the pipe options to match the original screensaver. Only a starting
+    /// point: any of them can be changed back afterwards.
+    /// </summary>
+    private void UseClassicPipes()
+    {
+        _joints.SelectedIndex = (int)JointStyle.Classic;
+        _finish.SelectedIndex = (int)Finish.Plastic;
+        _camera.SelectedIndex = (int)CameraMotion.Still;
+        _thickness.Checked = false;
+        _fittings.Checked = false;
+        _teapots.Checked = true; // the original had them too
+    }
+
+    /// <summary>The effects only exist in the modern style.</summary>
+    private void UpdateEffectToggles()
+    {
+        var modern = _style.SelectedIndex == (int)GraphicsStyle.Modern;
+        _ao.Enabled = _bloom.Enabled = _dof.Enabled = modern;
     }
 
     private static ComboBox Dropdown(params string[] items)
@@ -117,10 +147,12 @@ internal sealed class ConfigForm : Form
         _thickness.Checked = s.VaryThickness;
         _fittings.Checked = s.Fittings;
         _teapots.Checked = s.Teapots;
+        _style.SelectedIndex = (int)s.Style;
         _aa.SelectedIndex = s.Antialiasing switch { 0 => 0, 2 => 1, 4 => 2, _ => 3 };
         _ao.Checked = s.AmbientOcclusion;
         _bloom.Checked = s.Bloom;
         _dof.Checked = s.DepthOfField;
+        UpdateEffectToggles();
     }
 
     private void Apply()
@@ -134,6 +166,7 @@ internal sealed class ConfigForm : Form
         _settings.VaryThickness = _thickness.Checked;
         _settings.Fittings = _fittings.Checked;
         _settings.Teapots = _teapots.Checked;
+        _settings.Style = (GraphicsStyle)_style.SelectedIndex;
         _settings.Antialiasing = _aa.SelectedIndex switch { 0 => 0, 1 => 2, 2 => 4, _ => 8 };
         _settings.AmbientOcclusion = _ao.Checked;
         _settings.Bloom = _bloom.Checked;

@@ -10,16 +10,22 @@ namespace Pipes.Rendering;
 /// </summary>
 internal static class Shaders
 {
+    /// <summary>
+    /// For gluing shader pieces together: a raw string literal has no trailing newline, and <c>#version</c> must be
+    /// alone on its line.
+    /// </summary>
+    private const string NewLine = "\n";
+
     // ------------------------------------------------------------------------------------------------------------
     // Pipes
     // ------------------------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// Places one instance of a unit mesh. The same shader handles every shape; <c>uMode</c> says how to read the
-    /// instance data (see <c>PipeInstance</c> in Pieces.cs for what each field means per shape).
+    /// Shared by the modern and classic vertex shaders: the mesh and per-instance inputs, and <c>place()</c>, which
+    /// positions one vertex of one instance. The same function handles every shape; <c>uMode</c> says how to read
+    /// the instance data (see <c>PipeInstance</c> in Pieces.cs for what each field means per shape).
     /// </summary>
-    public const string PipeVertex = """
-        #version 330 core
+    private const string Placement = """
         layout(location = 0) in vec3 aPos;
         layout(location = 1) in vec3 aNormal;
         layout(location = 2) in vec3 iStart;
@@ -31,16 +37,9 @@ internal static class Shaders
         uniform mat4 uViewProj;
         uniform int uMode; // 0 cylinder, 1 sphere, 2 torus section, 3 oriented mesh
 
-        out vec3 vWorld;
-        out vec3 vNormal;
-        flat out vec3 vColor;    // "flat": same for the whole triangle, no interpolation needed
-        flat out vec2 vMaterial; // metallic, roughness
-
-        void main()
+        void place(out vec3 world, out vec3 normal)
         {
             float radius = iParams.x;
-            vec3 world;
-            vec3 normal;
 
             if (uMode == 0)
             {
@@ -83,12 +82,76 @@ internal static class Shaders
                 world = iStart + right * aPos.x + up * aPos.y + fwd * aPos.z;
                 normal = normalize(right) * aNormal.x + normalize(up) * aNormal.y + normalize(fwd) * aNormal.z;
             }
+        }
+        """;
 
+    /// <summary>Modern vertex shader: place the vertex and pass everything on for per-pixel lighting.</summary>
+    public const string PipeVertex = """
+        #version 330 core
+        """ + NewLine + Placement + NewLine + """
+
+        out vec3 vWorld;
+        out vec3 vNormal;
+        flat out vec3 vColor;    // "flat": same for the whole triangle, no interpolation needed
+        flat out vec2 vMaterial; // metallic, roughness
+
+        void main()
+        {
+            vec3 world, normal;
+            place(world, normal);
             vWorld = world;
             vNormal = normal;
             vColor = iColor;
             vMaterial = iParams.zw;
             gl_Position = uViewProj * vec4(world, 1.0);
+        }
+        """;
+
+    /// <summary>
+    /// Classic (lite) mode, lit the way 90s OpenGL did it: <b>Gouraud shading</b>. Lighting is worked out once per
+    /// <em>vertex</em>, and the GPU just blends the resulting colours across each triangle. It's much cheaper than
+    /// per-pixel lighting, and it's the source of the original's look: soft, slightly faceted highlights that
+    /// crawl across low-poly pipes as they turn.
+    /// <para>
+    /// It also skips the modern colour pipeline. Colours go back to their sRGB palette values and are lit directly,
+    /// like the fixed-function hardware of the time, with no HDR and no tonemapping.
+    /// </para>
+    /// </summary>
+    public const string ClassicVertex = """
+        #version 330 core
+        """ + NewLine + Placement + NewLine + """
+
+        uniform vec3 uCameraPos;
+        out vec3 vLit;
+
+        void main()
+        {
+            vec3 world, normal;
+            place(world, normal);
+            vec3 N = normalize(normal);
+            vec3 V = normalize(uCameraPos - world);
+            if (dot(N, V) < 0.0) N = -N;
+
+            // One white light from over the viewer's shoulder, plus flat ambient, like a GL_LIGHT0 setup.
+            vec3 L = normalize(vec3(0.35, 0.6, 0.7));
+            vec3 H = normalize(L + V);
+            vec3 base = pow(iColor, vec3(1.0 / 2.2)); // simulation colours are linear; back to the sRGB palette
+            float diffuse = max(dot(N, L), 0.0);
+            float spec = pow(max(dot(N, H), 0.0), 40.0);
+            vLit = base * (0.18 + 0.82 * diffuse) + vec3(0.7) * spec;
+
+            gl_Position = uViewProj * vec4(world, 1.0);
+        }
+        """;
+
+    public const string ClassicFragment = """
+        #version 330 core
+        in vec3 vLit;
+        uniform float uFade;
+        out vec4 FragColor;
+        void main()
+        {
+            FragColor = vec4(min(vLit, vec3(1.0)) * uFade, 1.0);
         }
         """;
 

@@ -5,15 +5,24 @@ using Silk.NET.OpenGL;
 
 namespace Pipes.Rendering;
 
-/// <summary>Which optional effects the renderer sets up. Fixed for the renderer's lifetime.</summary>
-internal readonly record struct RenderOptions(int Samples, bool AmbientOcclusion, bool Bloom, bool DepthOfField)
+/// <summary>
+/// How the renderer is set up. Fixed for the renderer's lifetime. <see cref="Classic"/> is the lite mode, which
+/// turns every effect off regardless of the other switches.
+/// </summary>
+internal readonly record struct RenderOptions(int Samples, bool AmbientOcclusion, bool Bloom, bool DepthOfField, bool Classic)
 {
-    public static RenderOptions From(PipesSettings s) => new(s.Antialiasing, s.AmbientOcclusion, s.Bloom, s.DepthOfField);
+    public static RenderOptions From(PipesSettings s) => s.Style == GraphicsStyle.Classic
+        ? new(s.Antialiasing, false, false, false, Classic: true)
+        : new(s.Antialiasing, s.AmbientOcclusion, s.Bloom, s.DepthOfField, Classic: false);
 }
 
 /// <summary>
-/// Draws a frame. Every shape is one instanced draw call; the effects are fullscreen passes over offscreen
-/// textures. In order:
+/// Draws a frame. Every shape is one instanced draw call.
+/// <para>
+/// <b>Classic (lite) style</b> is a single pass: pipes with per-vertex lighting on low-poly meshes into a plain 8-bit
+/// buffer, copied to the screen. No HDR, no effects.
+/// </para>
+/// <b>Modern style</b> adds fullscreen effect passes over offscreen textures. In order:
 /// <list type="number">
 /// <item><b>Geometry prepass</b> (only if AO or DoF is on): normals + depth into textures.</item>
 /// <item><b>SSAO</b> + <b>blur</b>: how enclosed each pixel is, used by the next pass to darken ambient light.</item>
@@ -40,7 +49,8 @@ internal sealed unsafe class PipeRenderer : IDisposable
 
     private readonly GL _gl;
     private readonly RenderOptions _options;
-    private readonly uint _pipeProgram, _geometryProgram, _bgProgram, _postProgram;
+    // Only the programs the style needs are compiled; the rest stay 0 (which OpenGL ignores on delete).
+    private readonly uint _pipeProgram, _geometryProgram, _bgProgram, _postProgram, _classicProgram;
     private readonly uint _ssaoProgram, _aoBlurProgram, _dofProgram, _bloomDownProgram, _bloomUpProgram;
     private readonly uint _emptyVao;
     private readonly MeshBuffers[] _meshes = new MeshBuffers[PieceLists.KindCount];
@@ -62,6 +72,23 @@ internal sealed unsafe class PipeRenderer : IDisposable
     {
         _gl = gl;
         _options = options;
+        _emptyVao = gl.GenVertexArray();
+
+        if (options.Classic)
+        {
+            _classicProgram = Program(Shaders.ClassicVertex, Shaders.ClassicFragment);
+
+            // Coarser meshes: about a third of the triangles, and with per-vertex lighting the facets are part of
+            // the look.
+            _meshes[(int)MeshKind.Cylinder] = CreateMesh(MeshBuilder.Cylinder(12));
+            _meshes[(int)MeshKind.Sphere] = CreateMesh(MeshBuilder.Sphere(8, 12));
+            _meshes[(int)MeshKind.Elbow] = CreateMesh(MeshBuilder.TorusSection(6, 12));
+            _meshes[(int)MeshKind.Ring] = CreateMesh(MeshBuilder.TorusSection(24, 8));
+            _meshes[(int)MeshKind.Teapot] = CreateMesh(MeshBuilder.Teapot());
+            _ssaoKernel = [];
+            return;
+        }
+
         _pipeProgram = Program(Shaders.PipeVertex, Shaders.PipeFragment);
         _geometryProgram = Program(Shaders.PipeVertex, Shaders.GeometryFragment);
         _bgProgram = Program(Shaders.FullscreenVertex, Shaders.BackgroundFragment);
@@ -71,7 +98,6 @@ internal sealed unsafe class PipeRenderer : IDisposable
         _dofProgram = Program(Shaders.FullscreenVertex, Shaders.DofFragment);
         _bloomDownProgram = Program(Shaders.FullscreenVertex, Shaders.BloomDownFragment);
         _bloomUpProgram = Program(Shaders.FullscreenVertex, Shaders.BloomUpFragment);
-        _emptyVao = gl.GenVertexArray();
 
         _meshes[(int)MeshKind.Cylinder] = CreateMesh(MeshBuilder.Cylinder(28));
         _meshes[(int)MeshKind.Sphere] = CreateMesh(MeshBuilder.Sphere(16, 28));
@@ -100,15 +126,18 @@ internal sealed unsafe class PipeRenderer : IDisposable
         _height = Math.Max(1, height);
         DeleteTargets();
 
-        // Multisampled HDR scene target. Renderbuffers, because MSAA buffers can't be sampled; we blit them instead.
+        // Multisampled scene target: HDR (16-bit float) for modern, plain 8-bit for classic. Renderbuffers, because
+        // MSAA buffers can't be sampled; we blit them instead.
+        var sceneFormat = _options.Classic ? InternalFormat.Rgba8 : InternalFormat.Rgba16f;
         _sceneFbo = NewFramebuffer();
-        var color = NewRenderbuffer(InternalFormat.Rgba16f);
+        var color = NewRenderbuffer(sceneFormat);
         var depth = NewRenderbuffer(InternalFormat.DepthComponent24);
         _gl.FramebufferRenderbuffer(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, RenderbufferTarget.Renderbuffer, color);
         _gl.FramebufferRenderbuffer(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment, RenderbufferTarget.Renderbuffer, depth);
         CheckFramebuffer("scene");
 
-        _resolveTex = NewTexture(InternalFormat.Rgba16f, PixelFormat.Rgba, _width, _height);
+        // The resolve target must have the same format as the scene: a multisample resolve can't convert formats.
+        _resolveTex = NewTexture(sceneFormat, PixelFormat.Rgba, _width, _height);
         _resolveFbo = FramebufferFor(_resolveTex, "resolve");
 
         if (NeedsGeometryPass)
@@ -149,14 +178,22 @@ internal sealed unsafe class PipeRenderer : IDisposable
     {
         UploadInstances(pieces);
 
+        if (_options.Classic)
+        {
+            ClassicPass(camera, fade);
+            // Two copies: MSAA resolve into a same-format texture, then a plain copy to the target. Going straight
+            // from the multisampled buffer to the window isn't allowed if their formats differ even slightly.
+            Blit(_sceneFbo, _resolveFbo);
+            Blit(_resolveFbo, targetFbo);
+            return;
+        }
+
         if (NeedsGeometryPass) GeometryPass(camera);
         if (_options.AmbientOcclusion) AmbientOcclusionPass(camera);
         ScenePass(camera);
 
         // Resolve MSAA: the GPU averages each pixel's samples as it copies.
-        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _sceneFbo);
-        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _resolveFbo);
-        _gl.BlitFramebuffer(0, 0, _width, _height, 0, 0, _width, _height, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+        Blit(_sceneFbo, _resolveFbo);
 
         var image = _resolveTex;
         if (_options.DepthOfField)
@@ -169,6 +206,24 @@ internal sealed unsafe class PipeRenderer : IDisposable
     }
 
     // ---- Passes ----
+
+    /// <summary>Lite mode's only pass: black background, pipes lit per vertex, fade applied in the shader.</summary>
+    private void ClassicPass(Camera camera, float fade)
+    {
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _sceneFbo);
+        _gl.Viewport(0, 0, (uint)_width, (uint)_height);
+        _gl.ClearColor(0f, 0f, 0f, 1f);
+        _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+        _gl.Enable(EnableCap.DepthTest);
+        _gl.DepthMask(true);
+        _gl.Disable(EnableCap.CullFace);
+
+        _gl.UseProgram(_classicProgram);
+        SetMatrix(_classicProgram, "uViewProj", camera.View * camera.Projection);
+        SetVector(_classicProgram, "uCameraPos", camera.Position);
+        _gl.Uniform1(Loc(_classicProgram, "uFade"), fade);
+        DrawPieces(_classicProgram);
+    }
 
     private void GeometryPass(Camera camera)
     {
@@ -355,6 +410,14 @@ internal sealed unsafe class PipeRenderer : IDisposable
         }
     }
 
+    /// <summary>Copy one framebuffer's colour to another of the same size (resolving MSAA if the source has it).</summary>
+    private void Blit(uint from, uint to)
+    {
+        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, from);
+        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, to);
+        _gl.BlitFramebuffer(0, 0, _width, _height, 0, 0, _width, _height, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+    }
+
     private void DrawFullscreen()
     {
         _gl.BindVertexArray(_emptyVao);
@@ -529,7 +592,7 @@ internal sealed unsafe class PipeRenderer : IDisposable
             _gl.DeleteBuffer(m.InstanceVbo);
         }
         _gl.DeleteVertexArray(_emptyVao);
-        foreach (var p in new[] { _pipeProgram, _geometryProgram, _bgProgram, _postProgram, _ssaoProgram, _aoBlurProgram, _dofProgram, _bloomDownProgram, _bloomUpProgram })
+        foreach (var p in new[] { _pipeProgram, _geometryProgram, _bgProgram, _postProgram, _classicProgram, _ssaoProgram, _aoBlurProgram, _dofProgram, _bloomDownProgram, _bloomUpProgram })
             _gl.DeleteProgram(p);
     }
 

@@ -141,6 +141,46 @@ internal sealed unsafe class GLHost : IDisposable
         bmp.Save(path, ImageFormat.Png);
     }
 
+    /// <summary>
+    /// Times rendering: simulates a busy scene, then renders <paramref name="frames"/> frames offscreen as fast as
+    /// possible and writes the average GPU+CPU cost per frame to <paramref name="reportPath"/>. No VSync here, so
+    /// the number is the real work per frame, not the monitor's refresh interval.
+    /// </summary>
+    public void Benchmark(PipesSettings settings, int width, int height, int frames, string reportPath)
+    {
+        using var renderer = new PipeRenderer(_gl, RenderOptions.From(settings));
+        var scene = new Scene(settings, new Random(1));
+        renderer.Resize(width, height);
+        scene.Start((float)width / height);
+        for (var t = 0f; t < 12f; t += 1f / 60f) scene.Update(1f / 60f); // let the scene fill up first
+
+        var fbo = _gl.GenFramebuffer();
+        var tex = _gl.GenTexture();
+        _gl.BindTexture(TextureTarget.Texture2D, tex);
+        _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, (uint)width, (uint)height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, null);
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
+        _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, tex, 0);
+
+        // Warm up (shader compilation, driver caches), then time. Finish() waits for the GPU, so the clock covers
+        // the GPU's work, not just the CPU queueing commands.
+        for (var i = 0; i < 30; i++) renderer.Render(scene.Camera, scene.Pieces, 1f, fbo);
+        _gl.Finish();
+        var clock = Stopwatch.StartNew();
+        for (var i = 0; i < frames; i++)
+        {
+            scene.Update(1f / 60f);
+            renderer.Render(scene.Camera, scene.Pieces, 1f, fbo);
+        }
+        _gl.Finish();
+        var ms = clock.Elapsed.TotalMilliseconds / frames;
+
+        _gl.DeleteFramebuffer(fbo);
+        _gl.DeleteTexture(tex);
+        File.WriteAllText(reportPath,
+            $"{settings.Style} {width}x{height} AA={settings.Antialiasing}: {ms:F2} ms/frame ({1000 / ms:F0} fps max), " +
+            $"{scene.Pieces[Simulation.MeshKind.Cylinder].Count + scene.Pieces[Simulation.MeshKind.Sphere].Count} pieces\n");
+    }
+
     private void CreateWindow(bool visible)
     {
         var instance = Win32.GetModuleHandle(null);
