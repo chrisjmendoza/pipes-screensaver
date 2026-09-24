@@ -6,6 +6,7 @@ namespace Pipes;
 
 /// <summary>
 /// Runs one pipe world at a time: fade in, grow, hold, fade out, then start a fresh world from a new angle.
+/// Also moves the camera.
 /// </summary>
 internal sealed class Scene
 {
@@ -15,12 +16,12 @@ internal sealed class Scene
 
     private readonly PipesSettings _settings;
     private readonly Random _rng;
-    private readonly List<PipeInstance> _cylinders = [];
-    private readonly List<PipeInstance> _spheres = [];
 
     private PipeWorld _world = null!;
     private float _aspect = 16f / 9f;
-    private float _yaw, _pitch, _yawSpeed, _distance;
+    private float _yaw, _pitch, _yawSpeed, _distance, _depth;
+    private float _time;
+    private Vector4 _phases; // random offsets so every scene's float motion is different
     private Phase _phase;
     private float _phaseTime;
 
@@ -36,10 +37,8 @@ internal sealed class Scene
 
     public float Fade { get; private set; }
 
-    public float Metallic => _settings.Finish == Finish.Metallic ? 0.85f : 0f;
-
-    public List<PipeInstance> Cylinders => _cylinders;
-    public List<PipeInstance> Spheres => _spheres;
+    /// <summary>Everything to draw this frame.</summary>
+    public PieceLists Pieces { get; } = new();
 
     public void Start(float aspect)
     {
@@ -73,10 +72,34 @@ internal sealed class Scene
                 break;
         }
 
-        if (_settings.CameraDrift) _yaw += _yawSpeed * dt;
+        UpdateCamera(dt);
+        _world.Collect(Pieces);
+    }
 
-        Camera.Update(_world.Center, _distance, _yaw, _pitch, _aspect, VerticalFov);
-        _world.Collect(_cylinders, _spheres);
+    private void UpdateCamera(float dt)
+    {
+        _time += dt;
+        var target = _world.Center;
+        var pitch = _pitch;
+        var distance = _distance;
+
+        if (_settings.Camera != CameraMotion.Still) _yaw += _yawSpeed * dt;
+
+        if (_settings.Camera == CameraMotion.Float)
+        {
+            // Several slow sine waves at unrelated speeds never quite repeat, which reads as organic drifting
+            // rather than a mechanical loop. Kept small so the grid stays framed.
+            pitch += 0.10f * MathF.Sin(_time * 0.21f + _phases.X);
+            distance *= 1f + 0.07f * MathF.Sin(_time * 0.13f + _phases.Y);
+            target += new Vector3(
+                0.9f * MathF.Sin(_time * 0.11f + _phases.Z),
+                0.5f * MathF.Sin(_time * 0.17f + _phases.W),
+                0f);
+        }
+
+        var eye = target + new Vector3(MathF.Sin(_yaw) * MathF.Cos(pitch), MathF.Sin(pitch), MathF.Cos(_yaw) * MathF.Cos(pitch)) * distance;
+        // Depth of field: fully blurred at the grid's front and back faces, sharp through the middle.
+        Camera.LookAt(eye, target, _aspect, VerticalFov, fogReference: _distance, depthOfFocus: _depth * 0.5f + 1f);
     }
 
     private void NewWorld()
@@ -86,6 +109,7 @@ internal sealed class Scene
         var width = Math.Clamp((int)MathF.Round(height * _aspect), 8, 48);
         var depth = Math.Clamp((int)MathF.Round(height * 1.1f), 8, 20);
         _world = new PipeWorld(new Int3(width, height, depth), _settings, _rng);
+        _depth = depth;
 
         // Fit both the grid's height and width into view (from its front face), viewed mostly head-on.
         var halfTan = MathF.Tan(VerticalFov * 0.5f);
@@ -94,7 +118,9 @@ internal sealed class Scene
         _distance = MathF.Max(fitHeight, fitWidth) * 0.95f + depth * 0.5f + 2f;
         _yaw = (_rng.NextSingle() - 0.5f) * 0.4f;
         _pitch = (_rng.NextSingle() - 0.5f) * 0.25f;
-        _yawSpeed = (_rng.Next(2) == 0 ? -1f : 1f) * 0.01f;
+        _yawSpeed = (_rng.Next(2) == 0 ? -1f : 1f) * (_settings.Camera == CameraMotion.Float ? 0.015f : 0.01f);
+        _time = 0f;
+        _phases = new Vector4(_rng.NextSingle(), _rng.NextSingle(), _rng.NextSingle(), _rng.NextSingle()) * MathF.Tau;
 
         Fade = 0f;
         Enter(Phase.FadeIn);
