@@ -58,7 +58,7 @@ internal sealed unsafe class GLHost : IDisposable
     public void Run(PipesSettings settings)
     {
         CreateWindow(visible: true);
-        using var renderer = new PipeRenderer(_gl, settings.Antialiasing);
+        using var renderer = new PipeRenderer(_gl, RenderOptions.From(settings));
         var scene = new Scene(settings, new Random());
 
         var (w, h) = ClientSize();
@@ -99,7 +99,7 @@ internal sealed unsafe class GLHost : IDisposable
             last = now;
 
             scene.Update(dt);
-            renderer.Render(scene.Camera, scene.Cylinders, scene.Spheres, scene.Metallic, scene.Fade, targetFbo: 0);
+            renderer.Render(scene.Camera, scene.Pieces, scene.Fade, targetFbo: 0);
             Win32.SwapBuffers(_hdc);
         }
 
@@ -109,7 +109,7 @@ internal sealed unsafe class GLHost : IDisposable
     /// <summary>Simulates <paramref name="seconds"/> of animation at a fixed step, renders one frame offscreen, saves a PNG.</summary>
     public void Screenshot(PipesSettings settings, int width, int height, float seconds, string path, int seed)
     {
-        using var renderer = new PipeRenderer(_gl, settings.Antialiasing);
+        using var renderer = new PipeRenderer(_gl, RenderOptions.From(settings));
         var scene = new Scene(settings, new Random(seed));
         renderer.Resize(width, height);
         scene.Start((float)width / height);
@@ -123,7 +123,7 @@ internal sealed unsafe class GLHost : IDisposable
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
         _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, tex, 0);
 
-        renderer.Render(scene.Camera, scene.Cylinders, scene.Spheres, scene.Metallic, scene.Fade, fbo);
+        renderer.Render(scene.Camera, scene.Pieces, scene.Fade, fbo);
 
         var pixels = new byte[width * height * 4];
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
