@@ -3,9 +3,9 @@ namespace Pipes.Rendering;
 /// <summary>
 /// All GLSL source, as C# raw string literals. See docs/RENDERING.md for how the passes fit together:
 /// <code>
-///  geometry prepass â”€â–º SSAO â”€â–º AO blur â”€â”
-///                                        â–¼
-///  background + pipes (HDR, MSAA) â”€â–º resolve â”€â–º depth of field â”€â–º bloom â”€â–º post (tonemap) â”€â–º screen
+///  geometry prepass ─► SSAO ─► AO blur ─┐
+///                                        ▼
+///  background + pipes (HDR, MSAA) ─► resolve ─► depth of field ─► bloom ─► post (tonemap) ─► screen
 /// </code>
 /// </summary>
 internal static class Shaders
