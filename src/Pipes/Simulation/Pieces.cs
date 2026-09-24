@@ -62,14 +62,10 @@ public sealed class PieceLists
         foreach (var list in _lists) list.Clear();
     }
 
-    /// <summary>Replace this set's contents with a copy of <paramref name="other"/>.</summary>
-    public void CopyFrom(PieceLists other)
+    /// <summary>Append a copy of everything in <paramref name="other"/>.</summary>
+    public void AddFrom(PieceLists other)
     {
-        for (var i = 0; i < KindCount; i++)
-        {
-            _lists[i].Clear();
-            _lists[i].AddRange(other._lists[i]);
-        }
+        for (var i = 0; i < KindCount; i++) _lists[i].AddRange(other._lists[i]);
     }
 
     public void Cylinder(Vector3 from, Vector3 to, float radius, PipeMaterial m) =>

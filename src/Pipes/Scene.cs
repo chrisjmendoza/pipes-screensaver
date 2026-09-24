@@ -18,6 +18,7 @@ internal sealed class Scene
     private readonly Random _rng;
 
     private PipeWorld _world = null!;
+    private BoxSpace _box = null!;
     private float _aspect = 16f / 9f;
     private float _yaw, _pitch, _yawSpeed, _distance, _depth;
     private float _time;
@@ -79,7 +80,7 @@ internal sealed class Scene
     private void UpdateCamera(float dt)
     {
         _time += dt;
-        var target = _world.Center;
+        var target = _box.Center;
         var pitch = _pitch;
         var distance = _distance;
 
@@ -120,7 +121,8 @@ internal sealed class Scene
             height = Math.Clamp((int)MathF.Round(shortSide / _aspect), shortSide, 48);
         }
         var depth = Math.Clamp((int)MathF.Round(shortSide * 1.1f), 8, 20);
-        _world = new PipeWorld(new Int3(width, height, depth), _settings, _rng);
+        _box = new BoxSpace(new Int3(width, height, depth));
+        _world = new PipeWorld(_box, _settings, _rng);
         _depth = depth;
 
         // Fit both the grid's height and width into view (from its front face), viewed mostly head-on.

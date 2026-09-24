@@ -4,7 +4,8 @@ namespace Pipes.Simulation;
 
 /// <summary>
 /// The classic pipes rules on a 3D grid: each pipe walks cell to cell, never crossing itself or another pipe,
-/// turns at random (or when blocked), and dies when boxed in. A new pipe then starts somewhere free.
+/// turns at random (or when blocked), and dies when boxed in. A new pipe then starts somewhere free. <em>Where</em>
+/// pipes may grow is up to the <see cref="IPipeSpace"/>: a box for the classic scene, a tunnel for fly-through.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -76,37 +77,57 @@ public sealed class PipeWorld
     /// <summary>Bare steel for valve stems and flange bolts.</summary>
     private static readonly PipeMaterial Steel = new(ToLinear(new Vector3(0.72f, 0.73f, 0.76f)), 0.9f, 0.35f);
 
+    /// <summary>Finished geometry is filed in cubes of this many cells per side, so it can be dropped a cube at a time.</summary>
+    public const int ChunkSize = 8;
+
+    private readonly IPipeSpace _space;
     private readonly Random _rng;
     private readonly PipesSettings _settings;
-    private readonly bool[,,] _occupied;
-    private readonly PieceLists _finished = new(); // geometry of completed steps; never changes once added
+
+    // Cells taken by a pipe (or reserved for one about to arrive). A set rather than a 3D array, so the world has no
+    // fixed size: fly-through mode keeps growing it ahead of the camera and trimming it behind.
+    private readonly HashSet<Int3> _occupied = [];
+
+    // Geometry of completed steps, filed by chunk. Pieces never change once added; whole chunks get dropped when
+    // they're far behind the camera (see Recycle).
+    private readonly Dictionary<Int3, PieceLists> _chunks = [];
+
     private readonly List<Pipe> _active = [];
     private int _spawned;
     private int _lastColor = -1;
 
-    public PipeWorld(Int3 size, PipesSettings settings, Random rng)
+    public PipeWorld(IPipeSpace space, PipesSettings settings, Random rng)
     {
-        Size = size;
+        _space = space;
         _settings = settings;
         _rng = rng;
-        _occupied = new bool[size.X, size.Y, size.Z];
-        Center = new Vector3(size.X - 1, size.Y - 1, size.Z - 1) * 0.5f;
+        ConcurrentPipes = settings.ConcurrentPipes;
+        PipeQuota = settings.PipesPerScene;
     }
 
-    public Int3 Size { get; }
+    /// <summary>How many pipes grow at once. Starts at the user's setting; fly-through raises it.</summary>
+    public int ConcurrentPipes { get; set; }
 
-    public Vector3 Center { get; }
+    /// <summary>How many pipes this world may start in total. <see cref="int.MaxValue"/> for endless.</summary>
+    public int PipeQuota { get; set; }
 
-    /// <summary>True once the scene has drawn its quota of pipes and all have finished.</summary>
-    public bool IsFinished => _spawned >= _settings.PipesPerScene && _active.Count == 0;
+    /// <summary>True once the world has started its quota of pipes and all have finished.</summary>
+    public bool IsFinished => _spawned >= PipeQuota && _active.Count == 0;
 
     public void Update(float dt)
     {
-        while (_active.Count < _settings.ConcurrentPipes && _spawned < _settings.PipesPerScene)
+        while (_active.Count < ConcurrentPipes && _spawned < PipeQuota)
         {
             _spawned++;
             if (TrySpawn() is { } p) _active.Add(p);
-            else { _spawned = _settings.PipesPerScene; break; } // grid is full
+            else
+            {
+                // No room found. A box is full, so stop for good. An endless space just has no room right here,
+                // right now: try again next frame.
+                if (_space.IsBounded) _spawned = PipeQuota;
+                else _spawned--;
+                break;
+            }
         }
 
         // Backwards so finished pipes can be removed in place. Branches started by a tee are appended to the end
@@ -129,9 +150,51 @@ public sealed class PipeWorld
     /// <summary>Completed geometry plus the partially grown step of each live pipe.</summary>
     public void Collect(PieceLists into)
     {
-        into.CopyFrom(_finished);
+        into.Clear();
+        foreach (var chunk in _chunks.Values) into.AddFrom(chunk);
         foreach (var p in _active)
             EmitStep(p, p.Travel / StepLength(p.Step), into, withHead: true);
+    }
+
+    /// <summary>
+    /// Forget every chunk for which <paramref name="drop"/> (given the chunk's centre) returns true: its geometry,
+    /// the cells it had occupied, and any pipe still growing inside it. Fly-through uses this to throw away what's
+    /// behind the camera, so memory and drawing cost stay flat however long it flies.
+    /// </summary>
+    public void Recycle(Func<Vector3, bool> drop)
+    {
+        List<Int3>? dropped = null;
+        foreach (var key in _chunks.Keys)
+        {
+            var centre = (key.ToVector() + new Vector3(0.5f)) * ChunkSize;
+            if (drop(centre)) (dropped ??= []).Add(key);
+        }
+        if (dropped == null) return;
+
+        foreach (var key in dropped)
+        {
+            _chunks.Remove(key);
+            for (var x = 0; x < ChunkSize; x++)
+            for (var y = 0; y < ChunkSize; y++)
+            for (var z = 0; z < ChunkSize; z++)
+                _occupied.Remove(new Int3(key.X * ChunkSize + x, key.Y * ChunkSize + y, key.Z * ChunkSize + z));
+        }
+        foreach (var pipe in _active)
+            if (dropped.Contains(ChunkOf(pipe.Cell))) pipe.Alive = false;
+        _active.RemoveAll(p => !p.Alive);
+    }
+
+    private static Int3 ChunkOf(Int3 cell) => new(FloorDiv(cell.X), FloorDiv(cell.Y), FloorDiv(cell.Z));
+
+    /// <summary>Division that rounds down for negative numbers too (C#'s / rounds towards zero: -1 / 8 == 0).</summary>
+    private static int FloorDiv(int v) => v >= 0 ? v / ChunkSize : (v - (ChunkSize - 1)) / ChunkSize;
+
+    /// <summary>The finished-geometry list for the chunk containing <paramref name="cell"/>.</summary>
+    private PieceLists ChunkFor(Int3 cell)
+    {
+        var key = ChunkOf(cell);
+        if (!_chunks.TryGetValue(key, out var chunk)) _chunks[key] = chunk = new PieceLists();
+        return chunk;
     }
 
     private static float StepLength(StepKind step) => step switch
@@ -145,8 +208,8 @@ public sealed class PipeWorld
     {
         for (var attempt = 0; attempt < 200; attempt++)
         {
-            var pos = new Int3(_rng.Next(Size.X), _rng.Next(Size.Y), _rng.Next(Size.Z));
-            if (IsOccupied(pos)) continue;
+            var pos = _space.SpawnCandidate(_rng);
+            if (!IsFree(pos)) continue;
 
             var dirs = FreeDirections(pos, exclude: null);
             if (dirs.Count == 0) continue;
@@ -160,7 +223,7 @@ public sealed class PipeWorld
                 Remaining = _rng.Next(30, 90),
             };
             Reserve(pos);
-            _finished.Sphere(pos.ToVector(), pipe.Radius * BallScale, pipe.Material);
+            ChunkFor(pos).Sphere(pos.ToVector(), pipe.Radius * BallScale, pipe.Material);
 
             var dir = dirs[_rng.Next(dirs.Count)];
             pipe.Step = StepKind.Start;
@@ -186,7 +249,7 @@ public sealed class PipeWorld
     /// <summary>The head reached the end of its step: keep the finished geometry and move into the next cell.</summary>
     private void CompleteStep(Pipe pipe)
     {
-        EmitStep(pipe, 1f, _finished, withHead: false);
+        EmitStep(pipe, 1f, ChunkFor(pipe.Cell), withHead: false);
         if (pipe.Step == StepKind.End)
         {
             pipe.Alive = false;
@@ -211,7 +274,7 @@ public sealed class PipeWorld
         }
 
         var ahead = cell + dirIn;
-        var blocked = !InBounds(ahead) || IsOccupied(ahead);
+        var blocked = !IsFree(ahead);
 
         if (blocked || _rng.NextSingle() < TurnChance)
         {
@@ -266,7 +329,7 @@ public sealed class PipeWorld
         if (roll < TeeChance)
         {
             // A tee needs a free side to branch into, and the branch counts towards the scene's pipe quota.
-            if (_spawned >= _settings.PipesPerScene) return;
+            if (_spawned >= PipeQuota) return;
             var sides = FreeDirections(pipe.Cell, exclude: pipe.In.Negate());
             sides.Remove(pipe.In);
             if (sides.Count == 0) return;
@@ -442,8 +505,7 @@ public sealed class PipeWorld
         foreach (var d in Directions)
         {
             if (exclude is { } ex && d == ex) continue;
-            var n = pos + d;
-            if (InBounds(n) && !IsOccupied(n)) list.Add(d);
+            if (IsFree(pos + d)) list.Add(d);
         }
         return list;
     }
@@ -480,9 +542,10 @@ public sealed class PipeWorld
     /// <summary>sRGB to linear (close-enough gamma 2.2). Lighting maths must happen in linear space.</summary>
     private static Vector3 ToLinear(Vector3 c) => new(MathF.Pow(c.X, 2.2f), MathF.Pow(c.Y, 2.2f), MathF.Pow(c.Z, 2.2f));
 
-    private void Reserve(Int3 p) => _occupied[p.X, p.Y, p.Z] = true;
-    private bool IsOccupied(Int3 p) => _occupied[p.X, p.Y, p.Z];
-    private bool InBounds(Int3 p) => p.X >= 0 && p.Y >= 0 && p.Z >= 0 && p.X < Size.X && p.Y < Size.Y && p.Z < Size.Z;
+    private void Reserve(Int3 p) => _occupied.Add(p);
+
+    /// <summary>Inside the space, and not taken by any pipe.</summary>
+    private bool IsFree(Int3 p) => _space.Contains(p) && !_occupied.Contains(p);
 
     /// <summary>The shape of the path through one cell.</summary>
     private enum StepKind
