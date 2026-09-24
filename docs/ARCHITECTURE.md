@@ -29,7 +29,7 @@ There are three layers, and each only talks to the one below it:
 | Layer | Files | Knows about |
 |---|---|---|
 | Host | `Program.cs`, `GLHost.cs`, `View.cs`, `Native/Win32.cs` | Windows: windows, messages, monitors, the OpenGL context, screensaver command-line rules |
-| Scene | `Scene.cs`, `Simulation/*` | Pipes, the grid, the camera. **No OpenGL at all.** |
+| Scene | `Scene.cs`, `Simulation/*` | Pipes, the grid, spaces and flight paths, the camera. **No OpenGL at all.** |
 | Rendering | `Rendering/*` | OpenGL, shaders, meshes. Knows nothing about grids or pipe rules. |
 
 The simulation produces plain data (`PieceLists`: lists of cylinders, spheres, elbows...). The renderer consumes
@@ -111,20 +111,81 @@ A few details:
 
 ```
 FadeIn ──► Growing ──► Hold ──► FadeOut ──► (new world) FadeIn ...
+                         │
+                         └─ fly-through ──► Flying (150 s) ──► FadeOut ──► ...
 ```
 
 Each new world is a fresh `PipeWorld` with a grid shaped to the view: 12 cells across its shorter side and as many
-as fit along the longer one (so a portrait monitor gets a tall grid), and a new random camera angle. `Scene` also owns camera motion:
+as fit along the longer one (so a portrait monitor gets a tall grid), and a new random camera angle. `Scene` also
+owns camera motion:
 
 - **Still:** fixed.
 - **Orbit:** yaw (the left/right angle) increases slowly.
 - **Float:** orbit, plus a few slow sine waves on pitch, distance and target point. The waves have unrelated
   speeds (0.21, 0.13, 0.11, 0.17), so their combination doesn't visibly repeat and reads as organic drifting.
+- **Fly through:** see the next section.
+
+## Fly-through: an endless tunnel
+
+In this mode the scene builds as usual, then the camera takes off, dives into the pipes, and flies on through a
+tunnel that keeps building itself ahead. Three pieces make it work.
+
+**The flight path** (`Simulation/FlightPath.cs`): straight runs along grid axes (18–40 units), joined by wide
+quarter-circle turns (radius 8). It's generated on demand, ahead of the camera, and stored as points every 0.5
+units, so "distance along the path" is just an index. Two properties matter:
+
+- **It never doubles back.** Once it has moved in a direction (say +X), it's never allowed to move in the opposite
+  one (−X). So it only ever advances along each axis, and can't loop round into the tunnel it already built. There
+  are always at least two turns left to choose from, so it never gets stuck.
+- **Fast "how far from the path?" lookups.** Path points are filed in 8-unit buckets, so finding the nearest point
+  to a cell only checks the 27 buckets around it, not the whole path.
+
+**The tunnel space** (`Simulation/TunnelSpace.cs`), an `IPipeSpace` (see below):
+
+- A **corridor** within 2.4 units of the path is always kept empty, so the camera never flies through a pipe. It's
+  cut through the box from the start, so while the scene builds you can see a gap through the middle where the
+  camera is about to go.
+- Before take-off, pipes grow only in the box, and the box can fill up as usual.
+- After take-off, new pipes spawn in the **wall**, a shell 2.4–6.5 units from the path, between 14 and 42 units
+  ahead of the camera. You see them start and grow as you approach. Fog hides the far end.
+- **Flow:** each stretch of path randomly flows with or against the flight. Near the path, `Flow()` returns that
+  direction, snapped to a grid axis, and `PipeWorld` biases pipes to follow it. Pipes running with the flow turn a
+  third as often, and pipes running across it turn into it. That's what lines the tunnel with long runs of pipe.
+
+**The flying camera** (`Scene.UpdateFlyingCamera`):
+
+- It starts at the beginning of the path, looking head-on at the box. The path runs straight through the box's
+  middle, so take-off is continuous: the camera just starts moving. The speed eases in over 3 seconds (a smoothstep
+  curve), so there's no jolt.
+- It looks at a point 5 units further along the path, so it turns into bends slightly early, the way a driver
+  looks into a corner.
+- **Keeping "up" sensible.** The usual camera uses the world's up direction. That breaks when flying straight up
+  or down, since "up" would point along the view and the view would spin. Instead, the camera keeps its own up
+  vector, and every frame removes whatever part of it points forward:
+  `up = normalize(up − forward × dot(up, forward))`. This "parallel transport" carries the roll smoothly through
+  every turn.
+- **Recycling:** every frame, chunks whose centre is more than 14 units behind the camera are dropped with
+  `PipeWorld.Recycle`, including their geometry, their occupied cells, and any pipe still growing there. Memory and
+  drawing cost stay flat: a two-minute flight held steady at about 115 MB.
+- **Enough pipes:** the camera uncovers (ring area × flight speed) cells of wall per second. `FlightConcurrency`
+  raises the number of pipes growing at once so they fill about 60% of that. Fuller than that looked like a solid
+  wall, and emptier looked bare. Slow growth speeds get more pipes to compensate.
 
 ## Simulation: how pipes grow
 
-`Simulation/PipeWorld.cs` holds the rules. The world is a 3D grid of cells, one unit apart, plus an
-`_occupied[x,y,z]` array.
+`Simulation/PipeWorld.cs` holds the rules. The world is a grid of cells, one unit apart. There's no fixed size:
+occupied cells are a `HashSet<Int3>`, so the world can extend without limit. Where pipes may grow is decided by an
+**`IPipeSpace`** (`Simulation/PipeSpace.cs`):
+
+- `Contains(cell)`: may a pipe be here?
+- `SpawnCandidate(rng)`: somewhere to try starting a new pipe.
+- `Flow(cell)`: a preferred direction, or none.
+- `IsBounded`: whether the space can fill up.
+
+`BoxSpace` is the classic box. `TunnelSpace` is fly-through's box plus tunnel. Splitting "the rules" (`PipeWorld`)
+from "the region" (the space) is what let the same growth rules fill both. When the world was made boundless, the
+old and new versions were checked by rendering the same seeds before and after: the pictures matched to within a
+few dozen faint pixels.
 
 ### Steps run face to face
 
@@ -154,7 +215,8 @@ When the head enters a cell, the pipe immediately decides how it will leave (`Be
 
 1. Out of length budget? → `End`.
 2. Is the cell ahead blocked, or did a 22% random roll say "turn"? → pick a free side direction and make a `Bend`
-   or `Knee` (per the Joints setting). Occasionally (1 in 300) the knee becomes a teapot.
+   or `Knee` (per the Joints setting). Occasionally (1 in 300) the knee becomes a teapot. (If the space has a flow
+   here, the odds shift: see *Fly-through*.)
 3. Otherwise → `Straight`, maybe with a fitting (valve, coupling, flange) or a tee.
 
 Whatever it chose, it **reserves** the neighbouring cell it will move into. Reserving ahead is what guarantees two
@@ -171,9 +233,10 @@ and *drawing* comes up constantly in games and simulations.
 
 ### Finished vs. growing geometry
 
-When a step completes, its geometry is added to `_finished`, a `PieceLists` that only ever grows. Each frame,
-`Collect` copies `_finished` and then appends the partial step of each live pipe, plus a small sphere on each head
-to keep the growing end rounded. Nothing is rebuilt from scratch.
+When a step completes, its geometry is added to the `PieceLists` of the **chunk** (an 8×8×8-cell cube) it's in.
+Finished pieces never change. Each frame, `Collect` gathers every chunk's pieces and then appends the partial step
+of each live pipe, plus a small sphere on each head to keep the growing end rounded. Nothing is rebuilt from
+scratch. Filing by chunk is what lets fly-through drop everything behind the camera a cube at a time.
 
 ### Tees and branches
 
@@ -219,8 +282,8 @@ Say you want a pressure gauge: a small disc on a stem.
 `ConfigForm` is the dialog, built in code rather than the WinForms designer. Choosing the Classic style also sets
 the pipe options to the original's (ball joints, plastic, one thickness, no fittings, still camera) as a starting
 point. That handler is attached *after* the saved settings are loaded into the controls, so opening the dialog
-doesn't trigger it. Its dropdown item order matches the
-enum order, so `(JointStyle)_joints.SelectedIndex` converts directly.
+doesn't trigger it. Its dropdown item order matches the enum order, so `(JointStyle)_joints.SelectedIndex` converts
+directly.
 
 ## Development workflow
 

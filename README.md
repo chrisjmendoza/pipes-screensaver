@@ -15,6 +15,9 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
 - **Effects:** screen-space ambient occlusion (soft contact shadows), subtle bloom, and optional depth of field.
 - **Scene flow:** pipes have a length budget so every scene gets a variety of colours. When a scene is done it
   holds for a moment, fades out, and restarts from a new angle. The camera can stay still, orbit, or float.
+- **Fly through the pipes:** a camera mode where, once the scene is built, the camera dives into it and flies on
+  through an endless tunnel of pipes growing ahead of it. The tunnel turns every so often, and its pipes flow with
+  or against the flight.
 - **Classic (lite) mode:** for nostalgia, or a slower PC. It renders like the 1990s original: low-poly pipes lit
   per vertex on a black background, no effects. It uses roughly a tenth of the GPU time of the modern style.
 - **Multi-monitor aware:** each monitor gets its own scene, framed for its shape (portrait monitors too), and
@@ -84,11 +87,14 @@ src/Pipes/
   Program.cs              argument parsing, mode dispatch
   GLHost.cs               bare Win32 window + WGL context (fullscreen / preview / windowed / offscreen), monitor layout
   View.cs                 one scene + renderer drawn into one rectangle (one per monitor in fullscreen)
-  Scene.cs                scene lifecycle: fade in, grow, hold, fade out; camera motion
+  Scene.cs                scene lifecycle (fade in, grow, hold, fly, fade out); camera motion
   PipesSettings.cs        settings model + JSON persistence
   ConfigForm.cs           settings dialog (WinForms, code-only)
   Simulation/
-    PipeWorld.cs          grid walk rules, bends, fittings, tees, colours, length budget
+    PipeWorld.cs          grid walk rules, bends, fittings, tees, colours, length budget, chunks
+    PipeSpace.cs          where pipes may grow: the IPipeSpace interface and the classic box
+    TunnelSpace.cs        fly-through's space: box + clear corridor + endless tunnel wall
+    FlightPath.cs         the camera's endless route of straight runs and wide turns
     Pieces.cs             the drawable pieces the simulation hands to the renderer
   Rendering/
     PipeRenderer.cs       instanced drawing and the chain of effect passes
