@@ -54,10 +54,34 @@ The frame loop in `GLHost.Run` is:
 
 1. Drain the Windows message queue (`PeekMessage`/`DispatchMessage`). Mouse moves and key presses arrive here,
    and in fullscreen mode any of them ends the screensaver.
-2. Measure `dt`, the seconds since the last frame. It's clamped to 0.1s so a hitch (e.g. the PC waking up) doesn't
+2. **Sleep until the monitor's next refresh** (`VBlankWaiter.Wait`, see below).
+3. Measure `dt`, the seconds since the last frame. It's clamped to 0.1s so a hitch (e.g. the PC waking up) doesn't
    make the pipes jump.
-3. For each view: update its scene, then render it into its rectangle.
-4. `SwapBuffers`. VSync is on, so this waits for the monitor's refresh. That's what paces the loop: no busy-waiting.
+4. For each view: update its scene, then render it into its rectangle.
+5. `SwapBuffers`, which queues the frame to be shown at the next refresh.
+
+### Frame pacing: sleeping, not spinning
+
+A frame is about 1 ms of work. The rest of each 16.7 ms (at 60 Hz) is waiting for the monitor. Normally, with
+VSync on, the OpenGL driver does that waiting, usually inside the first draw call of the next frame, when it needs
+a buffer the display is still showing. NVIDIA's driver sometimes waits by **spinning**: checking over and over,
+keeping a CPU core at 100% doing nothing. It varied between runs of identical settings, from 10% to 105% of a core.
+That's a poor trait in something that runs whenever the PC is idle.
+
+The fix (`Native/VBlankWaiter.cs`) is to do the waiting ourselves with a call that puts the thread to sleep,
+`D3DKMTWaitForVerticalBlankEvent`, on the monitor the window is (mostly) on. When it returns, the display has just
+started showing the previous frame, so a buffer is free. Drawing doesn't block, and `SwapBuffers` just queues the
+frame. The driver never waits, so it never spins. VSync stays on in the driver too, so there's still no tearing. If
+the call isn't available, or ever fails (say the display turns off), the app falls back to letting the driver pace
+it.
+
+Measured on the development PC: CPU went from anywhere between 10% and 105% of a core to a steady 7–15%, at a
+steady 60 fps. The measurements were taken by temporarily timing each part of the frame (wait, work, swap), which
+showed the "work" was about 1 ms and the rest was all waiting.
+
+What *didn't* work, for the record: calling `DwmFlush()` (which sleeps until the desktop compositor's next frame)
+with the driver's VSync off. It got CPU down to about 12%, but the compositor runs at the *fastest* monitor's rate.
+On a PC with a 75 Hz and a 60 Hz monitor, it rendered at 75 fps for a 60 Hz window, which judders.
 
 ### Views: a scene per monitor
 

@@ -7,17 +7,19 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - **Snapping growth for classic mode:** the original's pipes grew in visible jumps rather than smoothly. An option
   to quantise growth would complete the nostalgia.
 - **"Multiple pipes per colour" mode:** like the original's option, where several pipes share a colour.
-- **Lower CPU while waiting for VSync:** the frame itself takes well under a millisecond of CPU and about 1 ms of
-  GPU, but NVIDIA's driver sometimes *spins* (keeping a CPU core at 100%) while it waits for the monitor's refresh,
-  rather than sleeping. Measurements on the same settings went from 10% to 105% between runs. The fix is to wait
-  for the vertical blank ourselves with a sleeping call (`D3DKMTWaitForVerticalBlankEvent` on the window's
-  monitor), so the driver never has to wait. Calling `DwmFlush()` with the driver's VSync off also worked (about
-  12% CPU), but the compositor ran at the fastest monitor's rate (75 Hz) instead of the window's (60 Hz), which
-  would judder.
 - **Tunnel width setting:** the tunnel's inner and outer radius are constants in `TunnelSpace`. They could be a
   slider, like flight speed.
 - **Per-scene lighting moods:** e.g. a warm sunset key light, cool moonlight, or neon rim lights, picked per scene
   (or per tunnel stretch in fly-through).
+
+## Known issues
+
+- **One-off ~200 ms stall about 30 seconds in.** Seen on the development PC (NVIDIA, three monitors at mixed 60/75
+  Hz) in roughly half of test runs, entirely inside the driver, and always at about the same time after start
+  rather than at any particular moment in the scene. It isn't garbage collection (none happens in that frame) and
+  wasn't caused by frame pacing (it also happens with it switched off). Most likely the GPU dropping to a lower
+  power state once it notices how little work it's doing, which is known to briefly stall mixed-refresh
+  multi-monitor setups. It happens at most once per run.
 
 ## Ideas
 
@@ -41,3 +43,4 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - Fly-through: the camera dives into the finished scene and flies on through an endless, self-building tunnel
 - Banking: the fly-through camera rolls through turns like a plane (including 180° rolls into dives)
 - Flight speed setting
+- Frame pacing that sleeps instead of letting the driver spin: CPU from up to a full core down to 7–15%

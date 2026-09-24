@@ -35,6 +35,7 @@ internal sealed unsafe class GLHost : IDisposable
     private GL _gl = null!;
     private bool _running = true;
     private bool _resized;
+    private bool _moved;
     private Win32.POINT? _initialCursor;
     private readonly Stopwatch _sinceStart = Stopwatch.StartNew();
 
@@ -61,6 +62,10 @@ internal sealed unsafe class GLHost : IDisposable
         var (w, h) = ClientSize();
         var perMonitor = _mode == HostMode.Fullscreen && settings.SeparateMonitors;
         var views = CreateViews(settings, w, h, perMonitor, _ => new Random());
+
+        // Pace frames by sleeping until the monitor's vertical blank, rather than letting the driver wait (which it
+        // may do by spinning a CPU core). See VBlankWaiter. Null if unavailable: then the driver paces as before.
+        var vblank = VBlankWaiter.TryCreate(_hwnd);
 
         if (_mode == HostMode.Fullscreen)
         {
@@ -92,6 +97,19 @@ internal sealed unsafe class GLHost : IDisposable
                     // A single view follows the window. Per-monitor views are fixed to the monitors.
                     if (views.Count == 1) views[0].Resize(w, h);
                 }
+                if (_moved)
+                {
+                    // The window may now be (mostly) on a different monitor, with a different refresh rate.
+                    _moved = false;
+                    vblank?.Dispose();
+                    vblank = VBlankWaiter.TryCreate(_hwnd);
+                }
+
+                if (vblank != null && !vblank.Wait())
+                {
+                    vblank.Dispose(); // e.g. the display went to sleep: fall back to the driver's pacing
+                    vblank = null;
+                }
 
                 var now = clock.Elapsed.TotalSeconds;
                 var dt = (float)Math.Min(now - last, 0.1); // clamp after hitches so pipes don't jump
@@ -104,6 +122,7 @@ internal sealed unsafe class GLHost : IDisposable
         }
         finally
         {
+            vblank?.Dispose();
             foreach (var view in views) view.Dispose();
             if (_mode == HostMode.Fullscreen) Win32.ShowCursor(true);
         }
@@ -324,6 +343,9 @@ internal sealed unsafe class GLHost : IDisposable
         {
             case Win32.WM_SIZE:
                 _resized = true;
+                break;
+            case Win32.WM_MOVE:
+                _moved = true;
                 break;
             case Win32.WM_ERASEBKGND:
                 return 1;
