@@ -21,6 +21,7 @@ internal static class Win32
     public const uint CS_VREDRAW = 0x0001;
 
     public const int WM_DESTROY = 0x0002;
+    public const int WM_MOVE = 0x0003;
     public const int WM_SIZE = 0x0005;
     public const int WM_CLOSE = 0x0010;
     public const int WM_QUIT = 0x0012;

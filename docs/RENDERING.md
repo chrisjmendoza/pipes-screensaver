@@ -39,6 +39,12 @@ The trick is `glVertexAttribDivisor(location, 1)` in `CreateMesh`. Normally, ver
 vertex. With divisor 1, attributes 2–6 advance once per *instance*. So inside the vertex shader, `aPos`/`aNormal`
 are the mesh vertex, and `iStart`/`iAxis`/`iSide`/`iColor`/`iParams` are "which piece am I drawing".
 
+**Streaming the instance data.** Each instance buffer keeps a fixed, generous size (room for 16,384 pieces, doubling
+if ever needed). Every frame, `glBufferData` with no data "orphans" it: the driver hands over fresh memory of the
+same size while the GPU may still be reading last frame's. Then `glBufferSubData` fills just the part in use.
+Re-creating the buffer at the exact size every frame also works, but it makes the driver allocate a different size
+each time, which it can't simply recycle.
+
 ### One vertex shader, four shapes
 
 `PipeVertex` switches on `uMode`:

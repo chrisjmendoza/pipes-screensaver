@@ -104,6 +104,7 @@ src/Pipes/
     MeshBuilder.cs        cylinder, sphere, torus and teapot meshes
     Camera.cs             view/projection, fog and focus
   Native/Win32.cs         P/Invoke declarations
+  Native/VBlankWaiter.cs  sleeps until the monitor's refresh, so the driver never spins a CPU core waiting
 scripts/publish.ps1       single-file publish -> Pipes.scr (optionally install)
 docs/                     how it all works (start with ARCHITECTURE.md)
 ```

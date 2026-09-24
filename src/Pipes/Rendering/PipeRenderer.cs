@@ -55,6 +55,15 @@ internal sealed unsafe class PipeRenderer : IDisposable
     private readonly uint _emptyVao;
     private readonly MeshBuffers[] _meshes = new MeshBuffers[PieceLists.KindCount];
     private readonly int[] _instanceCounts = new int[PieceLists.KindCount];
+
+    /// <summary>
+    /// How many instances each mesh's GPU buffer has room for. Buffers start roomy and only ever double, so they're
+    /// almost never resized (see <see cref="UploadInstances"/>).
+    /// </summary>
+    private readonly int[] _instanceCapacity = new int[PieceLists.KindCount];
+
+    /// <summary>Starting room per mesh: enough for a busy scene without ever growing (about 1 MB each).</summary>
+    private const int InitialInstanceCapacity = 16_384;
     private readonly float[] _ssaoKernel;
 
     // Render targets, recreated on resize. Everything created is also tracked in these lists for cleanup.
@@ -397,9 +406,18 @@ internal sealed unsafe class PipeRenderer : IDisposable
                 _instanceScratch[o + 14] = p.Metallic; _instanceScratch[o + 15] = p.Roughness;
             }
 
+            // The usual streaming pattern: the buffer keeps a fixed, generous size. Each frame, BufferData with no
+            // data "orphans" it (the driver hands us fresh memory of the same size, while the GPU may still be
+            // reading last frame's), then BufferSubData fills just the part in use. Uploading with the exact size
+            // every frame instead makes the driver allocate a differently sized buffer every frame, which it can't
+            // simply recycle.
             _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _meshes[k].InstanceVbo);
+            if (instances.Count > _instanceCapacity[k])
+                _instanceCapacity[k] = Math.Max(instances.Count, Math.Max(_instanceCapacity[k] * 2, InitialInstanceCapacity));
+            var capacityBytes = (nuint)(_instanceCapacity[k] * FloatsPerInstance * sizeof(float));
+            _gl.BufferData(BufferTargetARB.ArrayBuffer, capacityBytes, null, BufferUsageARB.StreamDraw);
             fixed (float* data = _instanceScratch)
-                _gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(needed * sizeof(float)), data, BufferUsageARB.StreamDraw);
+                _gl.BufferSubData(BufferTargetARB.ArrayBuffer, 0, (nuint)(needed * sizeof(float)), data);
         }
     }
 
