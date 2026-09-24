@@ -62,8 +62,11 @@ internal sealed class Scene
 
     private bool Airborne => _tunnel is { Flying: true };
 
-    /// <summary>Flight speed in world units per second, a little faster when pipes grow faster.</summary>
-    private float FlySpeed => 3.5f + _settings.Speed * 0.06f;
+    /// <summary>Flight speed in world units (grid cells) per second.</summary>
+    private float FlySpeed => _settings.FlightSpeed;
+
+    /// <summary>1 at the default flight speed, bigger when flying faster. Scales things that should keep up with it.</summary>
+    private float SpeedFactor => MathF.Max(1f, FlySpeed / 5f);
 
     public void Start(float aspect)
     {
@@ -176,8 +179,8 @@ internal sealed class Scene
         // of the tunnel, where new pipes are still appearing.
         var focus = float.Lerp(_distance, 10f, ease);
         Camera.LookAt(eye, eye + forward * focus, _up, _aspect, VerticalFov,
-            far: float.Lerp(_distance * 4f, 70f, ease),
-            fogReference: float.Lerp(_distance, 26f, ease),
+            far: float.Lerp(_distance * 4f, tunnel.SpawnAheadMax + 28f, ease),
+            fogReference: float.Lerp(_distance, 26f * SpeedFactor, ease),
             depthOfFocus: float.Lerp(_depth * 0.5f + 1f, 6f, ease));
 
         tunnel.CameraS = _flightS;
@@ -231,8 +234,8 @@ internal sealed class Scene
             // On the approach, the turn's centre lies exactly along turn.To; on the way out, exactly behind (-From).
             var rollIn = SignedAngle(levelBefore, turn.To, turn.From);
             var rollOut = SignedAngle(-turn.From, levelAfter, turn.To);
-            var rollInStart = turn.StartS - RollDistance(rollIn);
-            var rollOutEnd = turn.EndS + RollDistance(rollOut);
+            var rollInStart = turn.StartS - RollDistance(rollIn, SpeedFactor);
+            var rollOutEnd = turn.EndS + RollDistance(rollOut, SpeedFactor);
 
             if (s < rollInStart) break; // this turn (and every later one) hasn't started yet
 
@@ -268,10 +271,12 @@ internal sealed class Scene
 
     /// <summary>
     /// How far along the path a roll takes: longer for bigger rolls, so a 180° roll is quicker per degree but still
-    /// smooth. At most 8 units each side of a turn, and straights are at least 18 long, so neighbouring turns' rolls
+    /// smooth. Faster flights stretch it out a little (<paramref name="speedFactor"/>), so a roll doesn't become a
+    /// snap. Capped at 8.5 units each side of a turn: straights are at least 18 long, so neighbouring turns' rolls
     /// never overlap.
     /// </summary>
-    private static float RollDistance(float angle) => 5f + 3f * MathF.Abs(angle) / MathF.PI;
+    private static float RollDistance(float angle, float speedFactor) =>
+        MathF.Min((5f + 3f * MathF.Abs(angle) / MathF.PI) * speedFactor, 8.5f);
 
     /// <summary>
     /// The angle to roll (around <paramref name="axis"/>) to turn <paramref name="from"/> into <paramref name="to"/>.
@@ -322,7 +327,7 @@ internal sealed class Scene
     {
         var ringArea = MathF.PI * (TunnelSpace.OuterRadius * TunnelSpace.OuterRadius - TunnelSpace.InnerRadius * TunnelSpace.InnerRadius);
         var needed = 0.6f * ringArea * FlySpeed / _settings.Speed;
-        return Math.Max(_settings.ConcurrentPipes, Math.Min((int)MathF.Ceiling(needed), 40));
+        return Math.Max(_settings.ConcurrentPipes, Math.Min((int)MathF.Ceiling(needed), 80));
     }
 
     private void NewWorld()
@@ -363,7 +368,8 @@ internal sealed class Scene
             // and out the far side before its first turn. The tunnel space keeps a corridor clear along it.
             var start = _box.Center + new Vector3(0f, 0f, _distance);
             _path = new FlightPath(start, new Int3(0, 0, -1), firstRun: _distance + depth * 0.5f + 14f, _rng);
-            _tunnel = new TunnelSpace(_path, _box);
+            // Spawn far enough ahead that pipes get about 2.5 seconds to grow before the camera arrives.
+            _tunnel = new TunnelSpace(_path, _box) { SpawnAhead = MathF.Max(14f, FlySpeed * 2.5f) };
             _world = new PipeWorld(_tunnel, _settings, _rng);
             _flightS = 0f;
             _sinceTakeOff = 0f;

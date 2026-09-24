@@ -146,8 +146,9 @@ units, so "distance along the path" is just an index. Two properties matter:
   cut through the box from the start, so while the scene builds you can see a gap through the middle where the
   camera is about to go.
 - Before take-off, pipes grow only in the box, and the box can fill up as usual.
-- After take-off, new pipes spawn in the **wall**, a shell 2.4–6.5 units from the path, between 14 and 42 units
-  ahead of the camera. You see them start and grow as you approach. Fog hides the far end.
+- After take-off, new pipes spawn in the **wall**, a shell 2.4–6.5 units from the path, in a band 28 units deep
+  that starts 14 units ahead of the camera (further at high flight speeds, see below). You see them start and grow
+  as you approach. Fog hides the far end.
 - **Flow:** each stretch of path randomly flows with or against the flight. Near the path, `Flow()` returns that
   direction, snapped to a grid axis, and `PipeWorld` biases pipes to follow it. Pipes running with the flow turn a
   third as often, and pipes running across it turn into it. That's what lines the tunnel with long runs of pipe.
@@ -182,7 +183,7 @@ units, so "distance along the path" is just an index. Two properties matter:
 
   Each turn has a *roll-in* just before its arc, the arc itself (up locked on the centre), and a *roll-out* just
   after (when there is one). Rolls are eased with smoothstep, and a 180° roll takes 8 units of path against 6.5 for
-  90°.
+  90° (a little more at high flight speeds, up to 8.5, so neighbouring turns' rolls never overlap).
 
   Two implementation notes worth copying elsewhere:
   - The up vector is a **pure function of how far along the path** the camera is, not something updated a bit each
@@ -195,8 +196,15 @@ units, so "distance along the path" is just an index. Two properties matter:
   `PipeWorld.Recycle`, including their geometry, their occupied cells, and any pipe still growing there. Memory and
   drawing cost stay flat: a two-minute flight held steady at about 115 MB.
 - **Enough pipes:** the camera uncovers (ring area × flight speed) cells of wall per second. `FlightConcurrency`
-  raises the number of pipes growing at once so they fill about 60% of that. Fuller than that looked like a solid
-  wall, and emptier looked bare. Slow growth speeds get more pipes to compensate.
+  raises the number of pipes growing at once so they fill about 60% of that (up to 80 pipes). Fuller than that
+  looked like a solid wall, and emptier looked bare. Slow growth speeds get more pipes to compensate.
+- **Flight speed** is a setting (1–20 cells/s, default 5). A few things scale with it so a fast flight still looks
+  right:
+  - **Pipe count:** more pipes grow at once (above).
+  - **Spawn distance:** new pipes start further ahead, about 2.5 seconds of flight, so they've had time to grow
+    before the camera arrives.
+  - **Fog and far plane:** pushed back to match, so the further-away spawning isn't hidden and doesn't pop in.
+  - **Rolls:** stretched slightly, so they don't become a snap.
 
 ## Simulation: how pipes grow
 

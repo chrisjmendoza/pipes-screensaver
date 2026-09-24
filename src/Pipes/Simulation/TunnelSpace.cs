@@ -25,10 +25,8 @@ public sealed class TunnelSpace(FlightPath path, BoxSpace box) : IPipeSpace
     /// <summary>How thick the tunnel's wall of pipes is.</summary>
     public const float OuterRadius = 6.5f;
 
-    /// <summary>New pipes start this far ahead of the camera (along the path)...</summary>
-    private const float SpawnAheadMin = 14f;
-    /// <summary>...up to this far. Beyond that, fog hides them anyway.</summary>
-    private const float SpawnAheadMax = 42f;
+    /// <summary>How deep the band of new pipes is, along the path.</summary>
+    private const float SpawnBandDepth = 28f;
 
     // The path never changes where it's already been built, so each cell's nearest-path answer can be remembered.
     private readonly Dictionary<Int3, (float Distance, float S, Vector3 Tangent, int Flow)> _nearest = [];
@@ -41,6 +39,15 @@ public sealed class TunnelSpace(FlightPath path, BoxSpace box) : IPipeSpace
 
     /// <summary>How far along the path the camera is. Spawning happens ahead of this.</summary>
     public float CameraS { get; set; }
+
+    /// <summary>
+    /// New pipes start at least this far ahead of the camera, and up to <see cref="SpawnBandDepth"/> beyond. Faster
+    /// flights push it out, so pipes have time to grow before the camera reaches them.
+    /// </summary>
+    public float SpawnAhead { get; init; } = 14f;
+
+    /// <summary>The far edge of where pipes spawn. The camera's fog and far plane are set to suit it.</summary>
+    public float SpawnAheadMax => SpawnAhead + SpawnBandDepth;
 
     public bool IsBounded => !Flying;
 
@@ -58,7 +65,7 @@ public sealed class TunnelSpace(FlightPath path, BoxSpace box) : IPipeSpace
         if (!Flying) return box.SpawnCandidate(rng);
 
         // A random point in the ring around the path, somewhere ahead of the camera.
-        var s = CameraS + SpawnAheadMin + rng.NextSingle() * (SpawnAheadMax - SpawnAheadMin);
+        var s = CameraS + SpawnAhead + rng.NextSingle() * SpawnBandDepth;
         var (centre, tangent) = path.Pose(s);
         var (u, v) = PieceLists.Perpendiculars(tangent);
         var angle = rng.NextSingle() * MathF.Tau;
@@ -83,13 +90,21 @@ public sealed class TunnelSpace(FlightPath path, BoxSpace box) : IPipeSpace
         return new Int3(0, 0, MathF.Sign(t.Z));
     }
 
-    /// <summary>Drop remembered answers for cells well behind the camera, so memory stays flat.</summary>
+    /// <summary>
+    /// Drop remembered answers for cells well behind the camera, so memory stays flat. Checking means scanning the
+    /// whole cache, so only do it once it has grown to twice what was left last time. (Pruning whenever it's over a
+    /// fixed size would rescan it every frame at high flight speeds, where the part still ahead can stay over that
+    /// size on its own.)
+    /// </summary>
     public void ForgetBehind()
     {
-        if (_nearest.Count < 50_000) return;
+        if (_nearest.Count < _pruneAt) return;
         foreach (var key in _nearest.Where(kv => kv.Value.S < CameraS - 30f).Select(kv => kv.Key).ToList())
             _nearest.Remove(key);
+        _pruneAt = Math.Max(50_000, _nearest.Count * 2);
     }
+
+    private int _pruneAt = 50_000;
 
     private (float Distance, float S, Vector3 Tangent, int Flow) Nearest(Int3 cell)
     {

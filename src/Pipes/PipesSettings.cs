@@ -72,6 +72,9 @@ public sealed class PipesSettings
     /// </summary>
     public bool SeparateMonitors { get; set; } = true;
 
+    /// <summary>Fly-through only: how fast the camera flies, in grid cells per second.</summary>
+    public float FlightSpeed { get; set; } = 5f;
+
     // ---- Pipes ----
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -150,12 +153,14 @@ public sealed class PipesSettings
     public const int MaxConcurrentPipes = 20;
     public const int MaxPipesPerScene = 200;
     public const int MaxSpeed = 80;
+    public const int MaxFlightSpeed = 20;
 
     public PipesSettings Clamped()
     {
         ConcurrentPipes = Math.Clamp(ConcurrentPipes, 1, MaxConcurrentPipes);
         PipesPerScene = Math.Clamp(PipesPerScene, ConcurrentPipes, MaxPipesPerScene);
         Speed = Math.Clamp(Speed, 1f, MaxSpeed);
+        FlightSpeed = Math.Clamp(FlightSpeed, 1f, MaxFlightSpeed);
         Antialiasing = Antialiasing switch { <= 0 => 0, <= 2 => 2, <= 4 => 4, _ => 8 };
         return this;
     }

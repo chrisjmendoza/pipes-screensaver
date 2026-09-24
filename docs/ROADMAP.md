@@ -7,8 +7,15 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - **Snapping growth for classic mode:** the original's pipes grew in visible jumps rather than smoothly. An option
   to quantise growth would complete the nostalgia.
 - **"Multiple pipes per colour" mode:** like the original's option, where several pipes share a colour.
-- **Fly-through settings:** flight speed and tunnel width are constants in `Scene` and `TunnelSpace`. They could be
-  sliders.
+- **Lower CPU while waiting for VSync:** the frame itself takes well under a millisecond of CPU and about 1 ms of
+  GPU, but NVIDIA's driver sometimes *spins* (keeping a CPU core at 100%) while it waits for the monitor's refresh,
+  rather than sleeping. Measurements on the same settings went from 10% to 105% between runs. The fix is to wait
+  for the vertical blank ourselves with a sleeping call (`D3DKMTWaitForVerticalBlankEvent` on the window's
+  monitor), so the driver never has to wait. Calling `DwmFlush()` with the driver's VSync off also worked (about
+  12% CPU), but the compositor ran at the fastest monitor's rate (75 Hz) instead of the window's (60 Hz), which
+  would judder.
+- **Tunnel width setting:** the tunnel's inner and outer radius are constants in `TunnelSpace`. They could be a
+  slider, like flight speed.
 - **Per-scene lighting moods:** e.g. a warm sunset key light, cool moonlight, or neon rim lights, picked per scene
   (or per tunnel stretch in fly-through).
 
@@ -33,3 +40,4 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - A scene per monitor (with portrait-aware grids), and no rendering in the gaps between monitors
 - Fly-through: the camera dives into the finished scene and flies on through an endless, self-building tunnel
 - Banking: the fly-through camera rolls through turns like a plane (including 180° rolls into dives)
+- Flight speed setting
