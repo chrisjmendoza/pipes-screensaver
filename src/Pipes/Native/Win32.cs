@@ -97,12 +97,15 @@ internal static class Win32
     public static extern IntPtr CreateWindowEx(uint exStyle, string className, string windowName, uint style,
         int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
 
-    [DllImport("user32.dll")] public static extern IntPtr DefWindowProc(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+    // Every function that carries window text or messages must use the same character set as RegisterClassEx and
+    // CreateWindowEx (Unicode). Mixing in the ANSI DefWindowProcA makes Windows read "Pipes" in UTF-16 as the
+    // one-character ANSI string "P" (the 'i' byte after it is 0x00, the terminator), so the title bar shows "P".
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr DefWindowProc(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool DestroyWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
-    [DllImport("user32.dll")] public static extern bool PeekMessage(out MSG msg, IntPtr hWnd, uint min, uint max, uint remove);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool PeekMessage(out MSG msg, IntPtr hWnd, uint min, uint max, uint remove);
     [DllImport("user32.dll")] public static extern bool TranslateMessage(ref MSG msg);
-    [DllImport("user32.dll")] public static extern IntPtr DispatchMessage(ref MSG msg);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr DispatchMessage(ref MSG msg);
     [DllImport("user32.dll")] public static extern void PostQuitMessage(int exitCode);
     [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr hWnd, IntPtr hdc);
