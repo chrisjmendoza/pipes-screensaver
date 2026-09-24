@@ -24,6 +24,21 @@ internal sealed class Scene
     /// <summary>The camera looks at a point this far ahead on the path, so it turns into bends a little early.</summary>
     private const float LookAhead = 5f;
 
+    /// <summary>
+    /// How quickly the camera's roll catches up with the banking it's aiming for (see <see cref="FollowRoll"/>), in
+    /// "spring swings per 90° roll". Higher is snappier, lower is lazier and swings further past.
+    /// </summary>
+    private const float RollSnap = 6f;
+
+    /// <summary>
+    /// How much the roll spring is slowed down: 1 settles without overshooting, 0 would swing forever. 0.45 swings
+    /// about 7° past a 90° bank, drifts a degree or two back the other way, and settles. Like a pendulum with drag.
+    /// </summary>
+    private const float RollDamping = 0.45f;
+
+    /// <summary>The roll spring is stepped at least this finely, so a slow or hitching frame can't make it unstable.</summary>
+    private const float RollStep = 1f / 120f;
+
     private readonly PipesSettings _settings;
     private readonly Random _rng;
 
@@ -42,6 +57,7 @@ internal sealed class Scene
     private float _flightS;       // distance travelled along the path
     private float _sinceTakeOff;  // seconds since take-off
     private Vector3 _up = Vector3.UnitY;
+    private float _rollRate;      // how fast the camera is rolling right now (radians/second): its roll momentum
 
     private enum Phase { FadeIn, Growing, Hold, Flying, FadeOut }
 
@@ -167,7 +183,7 @@ internal sealed class Scene
         var (ahead, _) = path.Pose(_flightS + LookAhead);
         var forward = Vector3.Normalize(ahead - position);
 
-        _up = BankedUp(position, forward);
+        _up = FollowRoll(BankedUp(position, forward), forward, dt);
 
         // A gentle bob and sway while flying, well inside the corridor so it never brushes a pipe.
         var side = Vector3.Cross(forward, _up);
@@ -219,7 +235,8 @@ internal sealed class Scene
     /// <para>
     /// This is a pure function of the distance flown, not something accumulated frame by frame: each call replays the
     /// turns from the start of the flight (a few dozen at most). So it can't drift, and the same point of the flight
-    /// always looks the same.
+    /// always looks the same. It's the attitude the camera is <i>aiming</i> for: <see cref="FollowRoll"/> then adds
+    /// the momentum on top.
     /// </para>
     /// </remarks>
     private Vector3 BankedUp(Vector3 position, Vector3 forward)
@@ -253,6 +270,63 @@ internal sealed class Scene
 
         // On a straight, between turns.
         return Perpendicular(level, forward);
+    }
+
+    /// <summary>
+    /// Rolls the camera towards <paramref name="target"/> (the banking <see cref="BankedUp"/> asks for) with momentum,
+    /// so it swings a little past each bank and each levelling-out, then eases back, like a pendulum.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// On its own, <see cref="BankedUp"/> rolls exactly as far as needed and stops dead, which looks like the camera
+    /// is on rails. A real aircraft has rotational inertia: it takes a moment to start rolling, and once rolling it
+    /// carries on a touch past where the pilot wanted it. That's a <b>damped spring</b>: the further the roll is from
+    /// the target, the harder it's pulled towards it (stiffness), and the faster it's already rolling, the more that's
+    /// resisted (damping). Damped below "critical" (<see cref="RollDamping"/> &lt; 1), it arrives with a bit of speed
+    /// left over, overshoots, and swings back. The target itself moves smoothly (smoothstep), so the overshoot is small.
+    /// </para>
+    /// <para>
+    /// Only the <b>roll</b> goes through the spring. As the camera pitches and yaws round a turn, the previous up is
+    /// carried along exactly (see below) and the spring just closes the remaining roll angle, so the camera never
+    /// lags behind the path itself, only in how far it's tipped.
+    /// </para>
+    /// <para>
+    /// The spring's speed is set relative to how long a 90° roll takes to fly at the current speed, so the swing
+    /// looks the same at every flight speed instead of lagging badly on fast flights.
+    /// </para>
+    /// <para>
+    /// The cost is a handful of multiplies per frame. It's stepped in fixed small steps (semi-implicit Euler: update
+    /// the speed first, then move with the new speed), which stays stable and behaves the same at 60 or 144 Hz.
+    /// </para>
+    /// </remarks>
+    private Vector3 FollowRoll(Vector3 target, Vector3 forward, float dt)
+    {
+        // Carry last frame's up along as forward swings round. Dropping the part of it that now points along forward
+        // turns it by exactly the camera's pitch, and leaves it alone for yaw: it moves with the camera, adding no roll.
+        var up = Perpendicular(_up, forward);
+
+        // How far the roll is from where it's aiming. The spring is stepped on "offset from the target", which the
+        // target doesn't change during one frame.
+        var toTarget = SignedAngle(up, target, forward);
+        var offset = -toTarget;
+
+        // Natural frequency (radians per second) from the time a 90° roll takes at this flight speed.
+        var rollSeconds = RollDistance(MathF.PI * 0.5f, SpeedFactor) / FlySpeed;
+        var omega = RollSnap / rollSeconds;
+
+        dt = MathF.Min(dt, 0.1f); // after a long stall, don't try to catch up in one go
+        var steps = Math.Max(1, (int)MathF.Ceiling(dt / RollStep));
+        var h = dt / steps;
+        for (var i = 0; i < steps; i++)
+        {
+            // Spring pull back towards the target, minus drag on the current roll rate.
+            var accel = -omega * omega * offset - 2f * RollDamping * omega * _rollRate;
+            _rollRate += accel * h;
+            offset += _rollRate * h;
+        }
+
+        // Roll by however far the offset moved this frame.
+        return Rotate(up, forward, offset + toTarget);
     }
 
     /// <summary>
@@ -374,6 +448,7 @@ internal sealed class Scene
             _flightS = 0f;
             _sinceTakeOff = 0f;
             _up = Vector3.UnitY;
+            _rollRate = 0f;
         }
         else
         {

@@ -43,4 +43,5 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - Fly-through: the camera dives into the finished scene and flies on through an endless, self-building tunnel
 - Banking: the fly-through camera rolls through turns like a plane (including 180° rolls into dives)
 - Flight speed setting
+- Roll momentum: banking swings a little past each bank and past level, then eases back
 - Frame pacing that sleeps instead of letting the driver spin: CPU from up to a full core down to 7–15%
