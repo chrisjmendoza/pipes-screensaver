@@ -12,6 +12,8 @@ internal sealed class ConfigForm : Form
     private readonly TrackBar _speed = new() { Minimum = 1, Maximum = PipesSettings.MaxSpeed, TickFrequency = 10, Width = 220 };
     private readonly Label _speedValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly ComboBox _camera = Dropdown("Still", "Slow orbit", "Floating drift", "Fly through the pipes");
+    private readonly TrackBar _flightSpeed = new() { Minimum = 1, Maximum = PipesSettings.MaxFlightSpeed, TickFrequency = 2, Width = 220 };
+    private readonly Label _flightSpeedValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox _separateMonitors = Check("Own scene on each monitor");
 
     private readonly ComboBox _joints = Dropdown("Classic (ball joints)", "Smooth elbows", "Mixed");
@@ -41,6 +43,10 @@ internal sealed class ConfigForm : Form
         var speedRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
         speedRow.Controls.AddRange([_speed, _speedValue]);
 
+        _flightSpeed.ValueChanged += (_, _) => _flightSpeedValue.Text = $"{_flightSpeed.Value} cells/s";
+        var flightSpeedRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
+        flightSpeedRow.Controls.AddRange([_flightSpeed, _flightSpeedValue]);
+
         var grid = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill };
         void Row(string label, Control c)
         {
@@ -59,6 +65,7 @@ internal sealed class ConfigForm : Form
         Row("Pipes per scene", _perScene);
         Row("Growth speed", speedRow);
         Row("Camera", _camera);
+        Row("Flight speed", flightSpeedRow);
         Row("", _separateMonitors);
 
         Heading("Pipes");
@@ -97,6 +104,7 @@ internal sealed class ConfigForm : Form
         Controls.Add(layout);
 
         LoadFrom(settings);
+        _camera.SelectedIndexChanged += (_, _) => UpdateFlightSpeedToggle();
 
         // Hooked up after loading, so opening the dialog doesn't count as the user picking a style.
         _style.SelectedIndexChanged += (_, _) =>
@@ -119,6 +127,10 @@ internal sealed class ConfigForm : Form
         _fittings.Checked = false;
         _teapots.Checked = true; // the original had them too
     }
+
+    /// <summary>Flight speed only matters when flying through the pipes.</summary>
+    private void UpdateFlightSpeedToggle() =>
+        _flightSpeed.Enabled = _flightSpeedValue.Enabled = _camera.SelectedIndex == (int)CameraMotion.FlyThrough;
 
     /// <summary>The effects only exist in the modern style.</summary>
     private void UpdateEffectToggles()
@@ -179,6 +191,9 @@ internal sealed class ConfigForm : Form
         _speed.Value = (int)Math.Round(s.Speed);
         _speedValue.Text = $"{_speed.Value} cells/s";
         _camera.SelectedIndex = (int)s.Camera;
+        _flightSpeed.Value = (int)Math.Round(s.FlightSpeed);
+        _flightSpeedValue.Text = $"{_flightSpeed.Value} cells/s";
+        UpdateFlightSpeedToggle();
         _separateMonitors.Checked = s.SeparateMonitors;
         _joints.SelectedIndex = (int)s.Joints;
         _finish.SelectedIndex = (int)s.Finish;
@@ -199,6 +214,7 @@ internal sealed class ConfigForm : Form
         _settings.PipesPerScene = (int)_perScene.Value;
         _settings.Speed = _speed.Value;
         _settings.Camera = (CameraMotion)_camera.SelectedIndex;
+        _settings.FlightSpeed = _flightSpeed.Value;
         _settings.SeparateMonitors = _separateMonitors.Checked;
         _settings.Joints = (JointStyle)_joints.SelectedIndex;
         _settings.Finish = (Finish)_finish.SelectedIndex;

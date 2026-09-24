@@ -19,7 +19,7 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
   through an endless tunnel of pipes growing ahead of it. The tunnel turns every so often, and its pipes flow with
   or against the flight. The camera banks through turns like a plane: it rolls into left and right turns, pulls
   straight up into climbs, and rolls onto its back to pull into dives. With no horizon, it flies like a spaceship:
-  whichever way up a maneuver leaves it becomes the new level.
+  whichever way up a maneuver leaves it becomes the new level. Flight speed is adjustable.
 - **Classic (lite) mode:** for nostalgia, or a slower PC. It renders like the 1990s original: low-poly pipes lit
   per vertex on a black background, no effects. It uses roughly a tenth of the GPU time of the modern style.
 - **Multi-monitor aware:** each monitor gets its own scene, framed for its shape (portrait monitors too), and
