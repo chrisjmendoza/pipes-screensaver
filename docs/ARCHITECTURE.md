@@ -210,12 +210,34 @@ units, so "distance along the path" is just an index. Two properties matter:
   90° (a little more at high flight speeds, up to 8.5, so neighbouring turns' rolls never overlap).
 
   Two implementation notes worth copying elsewhere:
-  - The up vector is a **pure function of how far along the path** the camera is, not something updated a bit each
-    frame. Each frame replays the turns from the start of the flight to work out the current "level" (a few dozen
-    at most). So it can't drift, and the same moment of a flight always looks the same (handy with `/shot`).
+  - The *target* up vector is a **pure function of how far along the path** the camera is, not something updated a
+    bit each frame. Each frame replays the turns from the start of the flight to work out the current "level" (a
+    few dozen at most). So it can't drift. (`/shot` steps at a fixed 1/60 s, so a given moment still always looks
+    the same even with the momentum below.)
   - Rolling uses **Rodrigues' rotation formula**: rotating `v` by angle θ around a unit axis `k` gives
     `v·cos θ + (k × v)·sin θ + k·(k·v)(1 − cos θ)`. The signed angle between two vectors around an axis is
     `atan2(axis · (a × b), a · b)`.
+- **Roll momentum** (`Scene.FollowRoll`). Following `BankedUp` exactly looked like the camera was on rails: each
+  roll stopped dead on its target. Now the camera's actual roll *chases* that target through a **damped spring**,
+  the same model as a pendulum with drag or a car's suspension:
+
+  ```
+  acceleration = −ω²·offset − 2ζω·rollRate      (offset = how far the roll is from its target)
+  ```
+
+  The first term pulls towards the target, harder the further away it is; the second resists rolling fast. With
+  the damping ratio ζ below 1 it's *underdamped*: it arrives still rolling, swings a little past, and eases back.
+  ζ = 0.45 gives about 7° past a 90° bank (10° past a 180° roll into a dive), then a degree or two back the other
+  way, then still. Levelling out after a turn swings past level the same way.
+
+  - **Only the roll is sprung.** As the camera pitches and yaws through a turn, last frame's up is carried along by
+    projecting it perpendicular to the new forward direction, which rotates it by exactly the pitch and not at all
+    for yaw. The spring then closes only the leftover roll angle, so the view never lags behind the path itself.
+  - **Speed-independent feel.** The spring's natural frequency ω is set as 6 ÷ (seconds a 90° roll takes at the
+    current flight speed). The swing depends only on ω × roll time, so it looks the same at 2 cells/s or 20.
+  - **Stepping:** semi-implicit Euler (update the rate from the acceleration, then the angle from the new rate) in
+    fixed steps of at most 1/120 s. Plain Euler can gain energy and blow up; this version stays stable and gives
+    the same motion at any refresh rate. The whole thing is a few multiplies per frame, so it costs nothing.
 - **Recycling:** every frame, chunks whose centre is more than 14 units behind the camera are dropped with
   `PipeWorld.Recycle`, including their geometry, their occupied cells, and any pipe still growing there. Memory and
   drawing cost stay flat: a two-minute flight held steady at about 115 MB.
