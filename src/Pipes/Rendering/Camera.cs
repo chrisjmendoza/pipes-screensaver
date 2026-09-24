@@ -23,13 +23,16 @@ internal sealed class Camera
     /// <summary>How quickly things blur away from <see cref="FocusDistance"/> (depth-of-field strength).</summary>
     public float FocusScale { get; private set; }
 
+    /// <param name="up">Which way is up on screen. Must not point along the view direction.</param>
+    /// <param name="far">Nothing farther than this is drawn.</param>
+    /// <param name="fogReference">Distance the fog is scaled to: bigger means thinner fog.</param>
     /// <param name="depthOfFocus">Roughly how far in front of the focus plane something is fully blurred.</param>
-    public void LookAt(Vector3 eye, Vector3 target, float aspect, float verticalFov, float fogReference, float depthOfFocus)
+    public void LookAt(Vector3 eye, Vector3 target, Vector3 up, float aspect, float verticalFov, float far, float fogReference, float depthOfFocus)
     {
         Position = eye;
-        View = Matrix4x4.CreateLookAt(eye, target, Vector3.UnitY);
+        View = Matrix4x4.CreateLookAt(eye, target, up);
         var distance = Vector3.Distance(eye, target);
-        Projection = Matrix4x4.CreatePerspectiveFieldOfView(verticalFov, aspect, 0.1f, distance * 4f);
+        Projection = Matrix4x4.CreatePerspectiveFieldOfView(verticalFov, aspect, 0.1f, far);
         // Far pipes fade gently into the background; scaled so the effect is similar at any grid size.
         FogDensity = 0.35f / (fogReference * fogReference);
 

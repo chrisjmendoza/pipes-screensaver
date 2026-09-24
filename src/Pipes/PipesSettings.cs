@@ -31,6 +31,8 @@ public enum CameraMotion
     Orbit,
     /// <summary>Orbit plus a gentle bob, sway and push in/out, like a camera on a slow drone.</summary>
     Float,
+    /// <summary>Build a scene, then fly into it and on through an endless tunnel of pipes growing ahead.</summary>
+    FlyThrough,
 }
 
 public enum GraphicsStyle

@@ -276,13 +276,21 @@ public sealed class PipeWorld
         var ahead = cell + dirIn;
         var blocked = !IsFree(ahead);
 
-        if (blocked || _rng.NextSingle() < TurnChance)
+        // Where the space has a flow (fly-through tunnels), pipes going with it run long and straight, and pipes going
+        // across it soon turn into it. That's what lines the tunnel with pipes running along it. With no flow, this is
+        // the classic 22% chance.
+        var flow = _space.Flow(cell);
+        var turnChance = flow is { } f ? (dirIn == f ? TurnChance * 0.35f : 0.55f) : TurnChance;
+
+        if (blocked || _rng.NextSingle() < turnChance)
         {
             var turns = FreeDirections(cell, exclude: dirIn.Negate());
             turns.Remove(dirIn);
             if (turns.Count > 0)
             {
-                pipe.Out = turns[_rng.Next(turns.Count)];
+                pipe.Out = flow is { } along && turns.Contains(along) && _rng.NextSingle() < 0.75f
+                    ? along
+                    : turns[_rng.Next(turns.Count)];
                 Reserve(cell + pipe.Out);
                 ChooseTurn(pipe);
                 return;

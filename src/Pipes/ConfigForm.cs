@@ -11,7 +11,7 @@ internal sealed class ConfigForm : Form
     private readonly NumericUpDown _perScene = new() { Minimum = 1, Maximum = PipesSettings.MaxPipesPerScene, Width = 70 };
     private readonly TrackBar _speed = new() { Minimum = 1, Maximum = PipesSettings.MaxSpeed, TickFrequency = 10, Width = 220 };
     private readonly Label _speedValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly ComboBox _camera = Dropdown("Still", "Slow orbit", "Floating drift");
+    private readonly ComboBox _camera = Dropdown("Still", "Slow orbit", "Floating drift", "Fly through the pipes");
     private readonly CheckBox _separateMonitors = Check("Own scene on each monitor");
 
     private readonly ComboBox _joints = Dropdown("Classic (ball joints)", "Smooth elbows", "Mixed");

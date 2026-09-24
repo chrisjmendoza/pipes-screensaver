@@ -5,14 +5,24 @@ using Pipes.Simulation;
 namespace Pipes;
 
 /// <summary>
-/// Runs one pipe world at a time: fade in, grow, hold, fade out, then start a fresh world from a new angle.
-/// Also moves the camera.
+/// Runs one pipe world at a time and moves the camera. The classic cycle is: fade in, grow, hold, fade out, then a
+/// fresh world from a new angle. In fly-through mode the hold ends in a take-off instead: the camera flies into the
+/// pipes and on through an endless tunnel, and only fades out after <see cref="FlightSeconds"/>.
 /// </summary>
 internal sealed class Scene
 {
     private const float FadeSeconds = 1.2f;
     private const float HoldSeconds = 2.5f;
     private const float VerticalFov = 0.75f; // ~43 degrees
+
+    /// <summary>How long a flight lasts before fading into a new scene.</summary>
+    private const float FlightSeconds = 150f;
+
+    /// <summary>The camera eases from standing still to full speed over this long.</summary>
+    private const float TakeOffSeconds = 3f;
+
+    /// <summary>The camera looks at a point this far ahead on the path, so it turns into bends a little early.</summary>
+    private const float LookAhead = 5f;
 
     private readonly PipesSettings _settings;
     private readonly Random _rng;
@@ -26,7 +36,14 @@ internal sealed class Scene
     private Phase _phase;
     private float _phaseTime;
 
-    private enum Phase { FadeIn, Growing, Hold, FadeOut }
+    // Fly-through state (null / unused in the other camera modes).
+    private FlightPath? _path;
+    private TunnelSpace? _tunnel;
+    private float _flightS;       // distance travelled along the path
+    private float _sinceTakeOff;  // seconds since take-off
+    private Vector3 _up = Vector3.UnitY;
+
+    private enum Phase { FadeIn, Growing, Hold, Flying, FadeOut }
 
     public Scene(PipesSettings settings, Random rng)
     {
@@ -40,6 +57,13 @@ internal sealed class Scene
 
     /// <summary>Everything to draw this frame.</summary>
     public PieceLists Pieces { get; } = new();
+
+    private bool FlyThrough => _settings.Camera == CameraMotion.FlyThrough;
+
+    private bool Airborne => _tunnel is { Flying: true };
+
+    /// <summary>Flight speed in world units per second, a little faster when pipes grow faster.</summary>
+    private float FlySpeed => 3.5f + _settings.Speed * 0.06f;
 
     public void Start(float aspect)
     {
@@ -65,19 +89,31 @@ internal sealed class Scene
                 if (_world.IsFinished) Enter(Phase.Hold);
                 break;
             case Phase.Hold:
-                if (_phaseTime >= HoldSeconds) Enter(Phase.FadeOut);
+                // A shorter pause before take-off: the pause is for admiring the finished scene, and in fly-through
+                // mode you're about to see it from the inside.
+                if (_phaseTime >= (FlyThrough ? 0.8f : HoldSeconds))
+                {
+                    if (FlyThrough) TakeOff();
+                    else Enter(Phase.FadeOut);
+                }
+                break;
+            case Phase.Flying:
+                _world.Update(dt);
+                if (_sinceTakeOff >= FlightSeconds) Enter(Phase.FadeOut);
                 break;
             case Phase.FadeOut:
                 Fade = Math.Max(0f, 1f - _phaseTime / FadeSeconds);
+                if (Airborne) _world.Update(dt); // keep the tunnel growing while the picture fades
                 if (_phaseTime >= FadeSeconds) NewWorld();
                 break;
         }
 
-        UpdateCamera(dt);
+        if (FlyThrough) UpdateFlyingCamera(dt);
+        else UpdateOrbitCamera(dt);
         _world.Collect(Pieces);
     }
 
-    private void UpdateCamera(float dt)
+    private void UpdateOrbitCamera(float dt)
     {
         _time += dt;
         var target = _box.Center;
@@ -100,7 +136,83 @@ internal sealed class Scene
 
         var eye = target + new Vector3(MathF.Sin(_yaw) * MathF.Cos(pitch), MathF.Sin(pitch), MathF.Cos(_yaw) * MathF.Cos(pitch)) * distance;
         // Depth of field: fully blurred at the grid's front and back faces, sharp through the middle.
-        Camera.LookAt(eye, target, _aspect, VerticalFov, fogReference: _distance, depthOfFocus: _depth * 0.5f + 1f);
+        Camera.LookAt(eye, target, Vector3.UnitY, _aspect, VerticalFov, far: distance * 4f,
+            fogReference: _distance, depthOfFocus: _depth * 0.5f + 1f);
+    }
+
+    /// <summary>
+    /// Fly-through camera. Before take-off it sits at the start of the path, looking head-on at the box (the path
+    /// runs straight through the middle of it). After take-off it moves along the path.
+    /// </summary>
+    private void UpdateFlyingCamera(float dt)
+    {
+        var path = _path!;
+        var tunnel = _tunnel!;
+        _time += dt;
+
+        // 0 on the ground, easing to 1 at full speed. Smoothstep makes the start and end of the ease gentle.
+        var ease = 0f;
+        if (Airborne)
+        {
+            _sinceTakeOff += dt;
+            var t = Math.Clamp(_sinceTakeOff / TakeOffSeconds, 0f, 1f);
+            ease = t * t * (3f - 2f * t);
+            _flightS += FlySpeed * ease * dt;
+        }
+
+        var (position, _) = path.Pose(_flightS);
+        var (ahead, _) = path.Pose(_flightS + LookAhead);
+        var forward = Vector3.Normalize(ahead - position);
+
+        // Keep "up" perpendicular to the direction of travel by removing the part of it that points forward. Done a
+        // little every frame, this carries the camera's roll smoothly through turns, including straight up or down,
+        // where a fixed world "up" would make the view spin wildly.
+        _up = Vector3.Normalize(_up - forward * Vector3.Dot(_up, forward));
+
+        // A gentle bob and sway while flying, well inside the corridor so it never brushes a pipe.
+        var side = Vector3.Cross(forward, _up);
+        var eye = position + ease * (
+            side * (0.3f * MathF.Sin(_time * 0.37f + _phases.X)) +
+            _up * (0.25f * MathF.Sin(_time * 0.29f + _phases.Y)));
+
+        // Before take-off, frame the box like the other modes. In flight, focus close and let fog hide the far end
+        // of the tunnel, where new pipes are still appearing.
+        var focus = float.Lerp(_distance, 10f, ease);
+        Camera.LookAt(eye, eye + forward * focus, _up, _aspect, VerticalFov,
+            far: float.Lerp(_distance * 4f, 70f, ease),
+            fogReference: float.Lerp(_distance, 26f, ease),
+            depthOfFocus: float.Lerp(_depth * 0.5f + 1f, 6f, ease));
+
+        tunnel.CameraS = _flightS;
+        if (Airborne)
+        {
+            // Throw away chunks well behind the camera: out of sight, and they'd otherwise pile up forever.
+            _world.Recycle(centre => Vector3.Dot(centre - eye, forward) < -14f);
+            tunnel.ForgetBehind();
+        }
+    }
+
+    private void TakeOff()
+    {
+        _tunnel!.Flying = true;
+        _world.PipeQuota = int.MaxValue;
+        _world.ConcurrentPipes = FlightConcurrency();
+        _sinceTakeOff = 0f;
+        Enter(Phase.Flying);
+    }
+
+    /// <summary>
+    /// Enough pipes growing at once to keep the tunnel walls filling up as fast as the camera flies into them.
+    /// Each second the camera uncovers a slice of wall (ring area × flight speed), and each pipe grows <c>Speed</c>
+    /// cells a second, so roughly (slice ÷ speed) pipes would fill it completely. Aiming for about 60% leaves gaps to
+    /// see through: a completely full tunnel looks like a wall. Slow-growing pipes need more of them. Never fewer than
+    /// the user's setting.
+    /// </summary>
+    private int FlightConcurrency()
+    {
+        var ringArea = MathF.PI * (TunnelSpace.OuterRadius * TunnelSpace.OuterRadius - TunnelSpace.InnerRadius * TunnelSpace.InnerRadius);
+        var needed = 0.6f * ringArea * FlySpeed / _settings.Speed;
+        return Math.Max(_settings.ConcurrentPipes, Math.Min((int)MathF.Ceiling(needed), 40));
     }
 
     private void NewWorld()
@@ -122,7 +234,6 @@ internal sealed class Scene
         }
         var depth = Math.Clamp((int)MathF.Round(shortSide * 1.1f), 8, 20);
         _box = new BoxSpace(new Int3(width, height, depth));
-        _world = new PipeWorld(_box, _settings, _rng);
         _depth = depth;
 
         // Fit both the grid's height and width into view (from its front face), viewed mostly head-on.
@@ -135,6 +246,25 @@ internal sealed class Scene
         _yawSpeed = (_rng.Next(2) == 0 ? -1f : 1f) * (_settings.Camera == CameraMotion.Float ? 0.015f : 0.01f);
         _time = 0f;
         _phases = new Vector4(_rng.NextSingle(), _rng.NextSingle(), _rng.NextSingle(), _rng.NextSingle()) * MathF.Tau;
+
+        if (FlyThrough)
+        {
+            // The camera starts straight in front of the box, and the path runs from there through the box's middle
+            // and out the far side before its first turn. The tunnel space keeps a corridor clear along it.
+            var start = _box.Center + new Vector3(0f, 0f, _distance);
+            _path = new FlightPath(start, new Int3(0, 0, -1), firstRun: _distance + depth * 0.5f + 14f, _rng);
+            _tunnel = new TunnelSpace(_path, _box);
+            _world = new PipeWorld(_tunnel, _settings, _rng);
+            _flightS = 0f;
+            _sinceTakeOff = 0f;
+            _up = Vector3.UnitY;
+        }
+        else
+        {
+            _path = null;
+            _tunnel = null;
+            _world = new PipeWorld(_box, _settings, _rng);
+        }
 
         Fade = 0f;
         Enter(Phase.FadeIn);
