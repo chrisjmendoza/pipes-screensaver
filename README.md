@@ -17,8 +17,9 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
   holds for a moment, fades out, and restarts from a new angle. The camera can stay still, orbit, or float.
 - **Fly through the pipes:** a camera mode where, once the scene is built, the camera dives into it and flies on
   through an endless tunnel of pipes growing ahead of it. The tunnel turns every so often, and its pipes flow with
-  or against the flight. The camera banks through turns like a plane: it rolls into left and right turns, rolls
-  onto its back to pull into dives, and spins in vertical climbs and dives.
+  or against the flight. The camera banks through turns like a plane: it rolls into left and right turns, pulls
+  straight up into climbs, and rolls onto its back to pull into dives. With no horizon, it flies like a spaceship:
+  whichever way up a maneuver leaves it becomes the new level.
 - **Classic (lite) mode:** for nostalgia, or a slower PC. It renders like the 1990s original: low-poly pipes lit
   per vertex on a black background, no effects. It uses roughly a tenth of the GPU time of the modern style.
 - **Multi-monitor aware:** each monitor gets its own scene, framed for its shape (portrait monitors too), and
