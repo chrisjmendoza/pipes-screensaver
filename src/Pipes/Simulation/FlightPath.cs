@@ -20,6 +20,12 @@ namespace Pipes.Simulation;
 /// </remarks>
 public sealed class FlightPath
 {
+    /// <summary>
+    /// One quarter-circle turn: it runs from <see cref="StartS"/> to <see cref="EndS"/> along the path, around
+    /// <see cref="Centre"/>, from travelling along <see cref="From"/> to travelling along <see cref="To"/>.
+    /// </summary>
+    public readonly record struct Turn(float StartS, float EndS, Vector3 Centre, Vector3 From, Vector3 To);
+
     public const float Spacing = 0.5f;
 
     /// <summary>Radius of the turns. Wide enough that a turn feels like banking, not snapping round a corner.</summary>
@@ -37,6 +43,7 @@ public sealed class FlightPath
     private readonly List<int> _flow = [];
     private readonly Dictionary<Int3, List<int>> _buckets = [];
     private readonly HashSet<Int3> _usedDirections = [];
+    private readonly List<Turn> _turns = [];
     private Int3 _direction;
     private int _currentFlow;
 
@@ -45,6 +52,7 @@ public sealed class FlightPath
     {
         _rng = rng;
         _direction = direction;
+        StartDirection = direction.ToVector();
         _usedDirections.Add(direction);
         _currentFlow = NextFlow();
         AddPoint(start, direction.ToVector());
@@ -53,6 +61,12 @@ public sealed class FlightPath
 
     /// <summary>Length generated so far, in world units.</summary>
     public float Length => (_points.Count - 1) * Spacing;
+
+    /// <summary>Direction of the first straight, before any turn.</summary>
+    public Vector3 StartDirection { get; }
+
+    /// <summary>Every turn generated so far, in order along the path.</summary>
+    public IReadOnlyList<Turn> Turns => _turns;
 
     /// <summary>Position and direction of travel at distance <paramref name="s"/> along the path.</summary>
     public (Vector3 Position, Vector3 Tangent) Pose(float s)
@@ -70,7 +84,7 @@ public sealed class FlightPath
     {
         while (Length < s)
         {
-            Turn();
+            AddTurn();
             AddStraight(18f + _rng.NextSingle() * 22f);
         }
     }
@@ -110,12 +124,13 @@ public sealed class FlightPath
     }
 
     /// <summary>A quarter circle from the current direction into a new, perpendicular one.</summary>
-    private void Turn()
+    private void AddTurn()
     {
         var next = PickTurn();
         var d1 = _direction.ToVector();
         var d2 = next.ToVector();
         var start = _points[^1];
+        var startS = Length;
         var centre = start + d2 * TurnRadius;
         _currentFlow = NextFlow(); // each new stretch picks its own flow
 
@@ -129,6 +144,7 @@ public sealed class FlightPath
             AddPoint(p, d1 * MathF.Cos(theta) + d2 * MathF.Sin(theta));
         }
 
+        _turns.Add(new Turn(startS, Length, centre, d1, d2));
         _direction = next;
         _usedDirections.Add(next);
     }

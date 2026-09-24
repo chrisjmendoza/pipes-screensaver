@@ -164,10 +164,7 @@ internal sealed class Scene
         var (ahead, _) = path.Pose(_flightS + LookAhead);
         var forward = Vector3.Normalize(ahead - position);
 
-        // Keep "up" perpendicular to the direction of travel by removing the part of it that points forward. Done a
-        // little every frame, this carries the camera's roll smoothly through turns, including straight up or down,
-        // where a fixed world "up" would make the view spin wildly.
-        _up = Vector3.Normalize(_up - forward * Vector3.Dot(_up, forward));
+        _up = BankedUp(position, forward);
 
         // A gentle bob and sway while flying, well inside the corridor so it never brushes a pipe.
         var side = Vector3.Cross(forward, _up);
@@ -190,6 +187,123 @@ internal sealed class Scene
             _world.Recycle(centre => Vector3.Dot(centre - eye, forward) < -14f);
             tunnel.ForgetBehind();
         }
+    }
+
+    /// <summary>
+    /// Which way is up for the camera at the current point of the flight: it banks through turns like a plane.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A plane doesn't skid sideways into a turn. It <b>rolls</b> until the turn is "overhead", pulls back on the
+    /// stick, and rolls level again afterwards. Here that's one rule: during a turn, the camera's up points at the
+    /// turn's centre. Everything else follows from it:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>Right or left turn: roll 90° towards it, pull round, roll back level.</item>
+    /// <item>Turn upwards: the centre is already overhead, so no roll, just pull up.</item>
+    /// <item>Turn downwards: roll 180° onto your back so the dive is overhead, then pull through it.</item>
+    /// </list>
+    /// <para>
+    /// Each turn therefore has three parts along the path: a roll-in just before the arc, the arc itself (up locked
+    /// onto the centre), and a roll-out just after it. Between turns the camera flies "level": world up while flying
+    /// horizontally. While flying straight up or down there's no horizon to be level with, so "level" means lined up
+    /// for the next turn. The roll then happens mid-climb or mid-dive, and the next turn is a clean pull. A dive
+    /// becomes: roll onto your back, pull into the dive, spin to face the way out, pull out level. A climb that
+    /// leaves the way it came becomes an Immelmann: pull up, over the top, roll upright.
+    /// </para>
+    /// <para>
+    /// This is a pure function of the distance flown, not something accumulated frame by frame. So it can't drift,
+    /// and the same point of the flight always looks the same.
+    /// </para>
+    /// </remarks>
+    private Vector3 BankedUp(Vector3 position, Vector3 forward)
+    {
+        var s = _flightS;
+        var turns = _path!.Turns;
+        FlightPath.Turn? previous = null;
+        FlightPath.Turn? upcoming = null;
+
+        for (var i = 0; i < turns.Count; i++)
+        {
+            var turn = turns[i];
+            FlightPath.Turn? next = i + 1 < turns.Count ? turns[i + 1] : null;
+            var levelBefore = LevelUp(turn.From, turn, previous);
+            var levelAfter = LevelUp(turn.To, next, turn);
+            // On the approach, the turn's centre lies exactly along turn.To; on the way out, exactly behind (-From).
+            var rollIn = SignedAngle(levelBefore, turn.To, turn.From);
+            var rollOut = SignedAngle(-turn.From, levelAfter, turn.To);
+            var rollInStart = turn.StartS - RollDistance(rollIn);
+            var rollOutEnd = turn.EndS + RollDistance(rollOut);
+
+            if (s < rollInStart)
+            {
+                upcoming = turn; // this turn (and every later one) hasn't started yet
+                break;
+            }
+
+            if (s < turn.StartS) // rolling in
+                return Rotate(levelBefore, forward, rollIn * Ease((s - rollInStart) / (turn.StartS - rollInStart)));
+
+            if (s <= turn.EndS) // in the turn: up locked onto the centre
+                return Perpendicular(turn.Centre - position, forward);
+
+            if (s < rollOutEnd) // rolling out
+                return Rotate(-turn.From, forward, rollOut * Ease((s - turn.EndS) / (rollOutEnd - turn.EndS)));
+
+            previous = turn;
+        }
+
+        // On a straight, between turns.
+        return Perpendicular(LevelUp(previous?.To ?? _path.StartDirection, upcoming, previous), forward);
+    }
+
+    /// <summary>
+    /// "Level" while travelling along <paramref name="direction"/>. Horizontal: world up. Vertical: facing the centre
+    /// of the <paramref name="nextTurn"/> (which is the direction it turns towards), so that turn needs no roll. If
+    /// that isn't known yet, keep the attitude the <paramref name="previousTurn"/> ended with (facing back the way
+    /// it came).
+    /// </summary>
+    private static Vector3 LevelUp(Vector3 direction, FlightPath.Turn? nextTurn, FlightPath.Turn? previousTurn)
+    {
+        if (MathF.Abs(direction.Y) < 0.5f) return Vector3.UnitY;
+        if (nextTurn is { } next) return next.To;
+        return previousTurn is { } prev ? -prev.From : Vector3.UnitY;
+    }
+
+    /// <summary>
+    /// How far along the path a roll takes: longer for bigger rolls, so a 180° roll is quicker per degree but still
+    /// smooth. At most 8 units each side of a turn, and straights are at least 18 long, so neighbouring turns' rolls
+    /// never overlap.
+    /// </summary>
+    private static float RollDistance(float angle) => 5f + 3f * MathF.Abs(angle) / MathF.PI;
+
+    /// <summary>
+    /// The angle to roll (around <paramref name="axis"/>) to turn <paramref name="from"/> into <paramref name="to"/>.
+    /// Positive rolls to the right. A half turn could go either way, and always goes right, so it's consistent.
+    /// </summary>
+    private static float SignedAngle(Vector3 from, Vector3 to, Vector3 axis)
+    {
+        var angle = MathF.Atan2(Vector3.Dot(axis, Vector3.Cross(from, to)), Vector3.Dot(from, to));
+        return MathF.Abs(angle) > MathF.PI - 0.01f ? MathF.PI : angle;
+    }
+
+    /// <summary>Rotate <paramref name="v"/> by <paramref name="angle"/> around <paramref name="axis"/> (Rodrigues' formula).</summary>
+    private static Vector3 Rotate(Vector3 v, Vector3 axis, float angle)
+    {
+        var (sin, cos) = MathF.SinCos(angle);
+        var rotated = v * cos + Vector3.Cross(axis, v) * sin + axis * (Vector3.Dot(axis, v) * (1f - cos));
+        return Perpendicular(rotated, axis);
+    }
+
+    /// <summary><paramref name="v"/> with any part along <paramref name="forward"/> removed, as a unit vector.</summary>
+    private static Vector3 Perpendicular(Vector3 v, Vector3 forward) =>
+        Vector3.Normalize(v - forward * Vector3.Dot(v, forward));
+
+    /// <summary>Smoothstep: 0 to 1 with a gentle start and finish.</summary>
+    private static float Ease(float t)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        return t * t * (3f - 2f * t);
     }
 
     private void TakeOff()
