@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 
 namespace Pipes.Simulation;
 
@@ -14,11 +14,11 @@ namespace Pipes.Simulation;
 /// </para>
 /// <code>
 ///   Straight          Bend (smooth)       Knee (ball joint)
-///   â”Œâ”€â”€â”€â”€â”€â”€â”€â”         â”Œâ”€â”€â”€â”€â”€â”€â”€â”           â”Œâ”€â”€â”€â”€â”€â”€â”€â”
-///   â”‚       â”‚         â”‚       â”‚           â”‚       â”‚
-///   â•â•â•â•â•â•â•â•â•â•â•       â•â•â•â•—    â”‚           â•â•â•â•â—   â”‚
-///   â”‚       â”‚         â”‚  â•‘    â”‚           â”‚   â•‘   â”‚
-///   â””â”€â”€â”€â”€â”€â”€â”€â”˜         â””â”€â”€â•‘â”€â”€â”€â”€â”˜           â””â”€â”€â”€â•‘â”€â”€â”€â”˜
+///   ┌───────┐         ┌───────┐           ┌───────┐
+///   │       │         │       │           │       │
+///   ═══════════       ═══╗    │           ════●   │
+///   │       │         │  ║    │           │   ║   │
+///   └───────┘         └──║────┘           └───║───┘
 /// </code>
 /// <para>
 /// A pipe's very first step goes from the centre of its spawn cell to a face (<see cref="StepKind.Start"/>), and

@@ -33,6 +33,17 @@ public enum CameraMotion
     Float,
 }
 
+public enum GraphicsStyle
+{
+    /// <summary>HDR lighting, per-pixel shading and the optional effects (AO, bloom, depth of field).</summary>
+    Modern,
+    /// <summary>
+    /// "Lite": renders like the 90s original. Per-vertex lighting on low-poly meshes, black background, no effects.
+    /// Far cheaper to run.
+    /// </summary>
+    Classic,
+}
+
 /// <summary>
 /// User settings, saved as JSON. Every property has a default, so a missing or older file still loads, and
 /// <see cref="Clamped"/> keeps hand-edited values in range.
@@ -71,6 +82,10 @@ public sealed class PipesSettings
     public bool Teapots { get; set; } = true;
 
     // ---- Graphics ----
+
+    /// <summary>Modern or classic (lite) rendering. Classic ignores the effect switches below.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public GraphicsStyle Style { get; set; } = GraphicsStyle.Modern;
 
     /// <summary>MSAA samples (0, 2, 4, 8).</summary>
     public int Antialiasing { get; set; } = 4;

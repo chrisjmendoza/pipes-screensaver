@@ -3,6 +3,9 @@
 How a frame gets drawn, one pass at a time. The code is in `src/Pipes/Rendering/`: `PipeRenderer.cs` runs the
 passes, and `Shaders.cs` holds the GLSL for each one.
 
+There are two styles. **Modern** is the full chain described in most of this document. **Classic (lite)** is a
+single pass, described in its own section below.
+
 ## The pass chain
 
 ```
@@ -178,6 +181,46 @@ Real lenses scatter a little light from bright spots into their surroundings. Bl
 5. **Fade:** multiply by the scene fade (0 to 1) for transitions.
 6. **Dither:** add ±½ of an 8-bit step of noise. Dark gradients like the background would otherwise show visible
    bands, because 8 bits per channel isn't enough in the dark range.
+
+## Classic (lite) style
+
+The lite style renders the way the 1995 original did on the OpenGL hardware of the time, and it's also the cheap
+option. The whole frame is one pass:
+
+```
+pieces ──► pipes, lit per vertex, into an 8-bit MSAA buffer (black background) ──► resolve ──► screen
+```
+
+**Gouraud shading.** The modern style lights every *pixel* (`PipeFragment`). Classic lights every *vertex*
+(`ClassicVertex`) and lets the GPU blend the colours across each triangle. With a 12-sided cylinder, that's
+12 lighting calculations around the pipe instead of one for every pixel it covers. It's also the visual signature
+of 90s 3D: highlights look slightly faceted and "crawl" along the edges as the pipes are viewed from new angles,
+because the highlight only exists where it lands on a vertex.
+
+The lighting model is the classic fixed-function one: a single white directional light (think `GL_LIGHT0`), flat
+ambient, and a Blinn-Phong highlight with a fixed shininess. Colours are lit directly in sRGB, as old hardware did,
+with no HDR, tonemapping or gamma correction. (The simulation stores linear colours for the modern style, so the
+classic shader converts them back first.)
+
+**Lower-poly meshes.** 12-sided cylinders and 8×12 spheres instead of 28 and 16×28: about a third of the triangles.
+
+**Sharing code between shaders.** Both styles need identical vertex placement (the cylinder/sphere/torus/teapot
+maths). Rather than copying it, `Shaders.Placement` holds the inputs and a `place()` function, and both
+`PipeVertex` and `ClassicVertex` are built by string concatenation: `#version` line + `Placement` + their own
+`main()`. GLSL has no `#include`, so gluing strings together is the usual approach.
+
+**Cost** (`/bench`, RTX 3080; the numbers vary run to run as the GPU changes clock speed, but the gap is
+consistent):
+
+| Style | 1920×1080 | 5680×1920 (three monitors) |
+|---|---|---|
+| Classic, no AA | ~0.25 ms/frame | ~0.5 ms/frame |
+| Classic, 4x AA | ~0.7–1.3 ms/frame | ~0.7 ms/frame |
+| Modern, 4x AA, AO + bloom | ~3.5 ms/frame | ~8 ms/frame |
+| Modern, 8x AA, AO + bloom + DoF | ~4 ms/frame | ~7–8 ms/frame |
+
+At 60 fps a frame lasts 16.7 ms, and with VSync the GPU idles for the rest. So in classic mode it's idle more
+than 95% of the time.
 
 ## Bug story: the black boxes (NaN)
 

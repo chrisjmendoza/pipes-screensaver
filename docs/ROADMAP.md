@@ -61,6 +61,8 @@ Add `FlyThrough` to `CameraMotion` ("Fly through the pipes").
 
 ## Ideas
 
+- **Snapping growth for classic mode:** the original's pipes grew in visible jumps rather than smoothly. An option
+  to quantise growth would complete the nostalgia.
 - **Textured/"flex" pipes:** ribbed flexible conduit (a ripple in the cylinder shader's radius along its length),
   or subtle surface textures.
 - **"Multiple pipes per colour" mode:** like the original's option, where several pipes share a colour.
@@ -80,3 +82,4 @@ Add `FlyThrough` to `CameraMotion` ("Fly through the pipes").
 - The teapot easter egg
 - SSAO, bloom, depth of field
 - Camera modes: still, orbit, float
+- Classic (lite) style: the original's look at about a tenth of the GPU cost

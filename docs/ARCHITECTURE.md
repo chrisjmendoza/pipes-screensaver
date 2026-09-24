@@ -176,7 +176,10 @@ Say you want a pressure gauge: a small disc on a stem.
   choice.
 - `PIPES_SETTINGS` (environment variable) overrides the file location. Useful for test renders.
 
-`ConfigForm` is the dialog, built in code rather than the WinForms designer. Its dropdown item order matches the
+`ConfigForm` is the dialog, built in code rather than the WinForms designer. Choosing the Classic style also sets
+the pipe options to the original's (ball joints, plastic, one thickness, no fittings, still camera) as a starting
+point. That handler is attached *after* the saved settings are loaded into the controls, so opening the dialog
+doesn't trigger it. Its dropdown item order matches the
 enum order, so `(JointStyle)_joints.SelectedIndex` converts directly.
 
 ## Development workflow
@@ -187,5 +190,8 @@ enum order, so `(JointStyle)_joints.SelectedIndex` converts directly.
 - For visual debugging, temporarily make a shader output an intermediate value, then render a shot. For example,
   in `PipeFragment`, `FragColor = vec4(vec3(ao), 1.0);` shows the ambient occlusion buffer directly. This is how
   the AO strength was tuned.
+- `Pipes.exe /bench bench.txt 300 1920 1080` renders 300 frames offscreen with no VSync and writes the average
+  time per frame. `_gl.Finish()` before stopping the clock makes it include the GPU's work, not just the time the
+  CPU took to queue commands. Combine it with `PIPES_SETTINGS` to compare settings.
 - For intermittent glitches, make them countable. Flag the bad pixels in a shader (e.g. `isnan()` → magenta),
   render a few thousand frames offscreen, and count. See "Bug story: the black boxes" in RENDERING.md.

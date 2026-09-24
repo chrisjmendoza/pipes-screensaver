@@ -15,6 +15,8 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
 - **Effects:** screen-space ambient occlusion (soft contact shadows), subtle bloom, and optional depth of field.
 - **Scene flow:** pipes have a length budget so every scene gets a variety of colours. When a scene is done it
   holds for a moment, fades out, and restarts from a new angle. The camera can stay still, orbit, or float.
+- **Classic (lite) mode:** for nostalgia, or a slower PC. It renders like the 1990s original: low-poly pipes lit
+  per vertex on a black background, no effects. It uses roughly a tenth of the GPU time of the modern style.
 - **Proper screensaver:** fullscreen across all monitors, per-monitor high-DPI, works in the Screen Saver
   Settings preview box, and has a settings dialog.
 
@@ -33,6 +35,13 @@ Render a still offscreen (no window appears). Handy for checking visual changes:
 
 ```powershell
 Pipes.exe /shot out.png [seconds=20] [width=1920] [height=1080] [seed=1]
+```
+
+To measure how expensive a settings combination is, `/bench` renders a few hundred frames offscreen (no VSync)
+and writes the average time per frame to a text file:
+
+```powershell
+Pipes.exe /bench bench.txt [frames=300] [width=1920] [height=1080]
 ```
 
 To try settings without touching your real ones, point `PIPES_SETTINGS` at another JSON file:
@@ -60,6 +69,7 @@ an elevated PowerShell. That copies it to System32 so "Pipes" appears in the Scr
 | `/c[:hwnd]` or none | Settings dialog |
 | `/w` | Windowed (dev) |
 | `/shot <png> [s] [w] [h] [seed]` | Offscreen still (dev) |
+| `/bench <txt> [frames] [w] [h]` | Time rendering, write ms/frame (dev) |
 
 Settings are stored at `%LOCALAPPDATA%\PipesScreensaver\settings.json`.
 
