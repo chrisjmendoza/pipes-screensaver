@@ -64,6 +64,12 @@ public sealed class PipesSettings
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public CameraMotion Camera { get; set; } = CameraMotion.Float;
 
+    /// <summary>
+    /// With several monitors, give each its own scene (framed for its shape) instead of one scene stretched across
+    /// the whole desktop. Also skips rendering the parts of the desktop no monitor shows.
+    /// </summary>
+    public bool SeparateMonitors { get; set; } = true;
+
     // ---- Pipes ----
 
     [JsonConverter(typeof(JsonStringEnumConverter))]

@@ -66,8 +66,6 @@ Add `FlyThrough` to `CameraMotion` ("Fly through the pipes").
 - **Textured/"flex" pipes:** ribbed flexible conduit (a ripple in the cylinder shader's radius along its length),
   or subtle surface textures.
 - **"Multiple pipes per colour" mode:** like the original's option, where several pipes share a colour.
-- **Separate scenes per monitor:** each monitor gets its own grid and camera instead of one scene spanning all of
-  them. Needs a viewport per monitor, from `EnumDisplayMonitors`.
 - **Shadows:** real shadows from the key light (a shadow map) would add a lot of depth. SSAO currently does part of
   that job.
 - **Per-scene lighting moods:** e.g. a warm sunset key light, cool moonlight, or neon rim lights, picked per scene.
@@ -83,3 +81,4 @@ Add `FlyThrough` to `CameraMotion` ("Fly through the pipes").
 - SSAO, bloom, depth of field
 - Camera modes: still, orbit, float
 - Classic (lite) style: the original's look at about a tenth of the GPU cost
+- A scene per monitor (with portrait-aware grids), and no rendering in the gaps between monitors

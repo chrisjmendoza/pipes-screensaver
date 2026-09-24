@@ -12,6 +12,7 @@ internal sealed class ConfigForm : Form
     private readonly TrackBar _speed = new() { Minimum = 1, Maximum = PipesSettings.MaxSpeed, TickFrequency = 10, Width = 220 };
     private readonly Label _speedValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly ComboBox _camera = Dropdown("Still", "Slow orbit", "Floating drift");
+    private readonly CheckBox _separateMonitors = Check("Own scene on each monitor");
 
     private readonly ComboBox _joints = Dropdown("Classic (ball joints)", "Smooth elbows", "Mixed");
     private readonly ComboBox _finish = Dropdown("Glossy plastic", "Metallic", "Mixed (per pipe)");
@@ -58,6 +59,7 @@ internal sealed class ConfigForm : Form
         Row("Pipes per scene", _perScene);
         Row("Growth speed", speedRow);
         Row("Camera", _camera);
+        Row("", _separateMonitors);
 
         Heading("Pipes");
         Row("Joints", _joints);
@@ -177,6 +179,7 @@ internal sealed class ConfigForm : Form
         _speed.Value = (int)Math.Round(s.Speed);
         _speedValue.Text = $"{_speed.Value} cells/s";
         _camera.SelectedIndex = (int)s.Camera;
+        _separateMonitors.Checked = s.SeparateMonitors;
         _joints.SelectedIndex = (int)s.Joints;
         _finish.SelectedIndex = (int)s.Finish;
         _thickness.Checked = s.VaryThickness;
@@ -196,6 +199,7 @@ internal sealed class ConfigForm : Form
         _settings.PipesPerScene = (int)_perScene.Value;
         _settings.Speed = _speed.Value;
         _settings.Camera = (CameraMotion)_camera.SelectedIndex;
+        _settings.SeparateMonitors = _separateMonitors.Checked;
         _settings.Joints = (JointStyle)_joints.SelectedIndex;
         _settings.Finish = (Finish)_finish.SelectedIndex;
         _settings.VaryThickness = _thickness.Checked;

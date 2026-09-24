@@ -6,7 +6,7 @@ goes deeper into the pipe simulation. The graphics side has its own guide, [REND
 ## The big picture
 
 ```
-Program.Main ──► parses /s /p /c /w /shot
+Program.Main ──► parses /s /p /c /w /shot /bench
      │
      ├─ /c ──────► ConfigForm (WinForms settings dialog)
      │
@@ -14,12 +14,12 @@ Program.Main ──► parses /s /p /c /w /shot
                                                         │
                     ┌───────────────────────────────────┘
                     ▼
-                 Scene.Update(dt)                        what to draw
-                    ├─ PipeWorld.Update(dt)              grow pipes (simulation)
-                    ├─ camera motion                     where to look from
-                    └─ PipeWorld.Collect(Pieces)         list every piece to draw
-                    ▼
-                 PipeRenderer.Render(camera, pieces)     how to draw it (OpenGL)
+                 for each View (one per monitor, or just one):
+                    Scene.Update(dt)                     what to draw
+                       ├─ PipeWorld.Update(dt)           grow pipes (simulation)
+                       ├─ camera motion                  where to look from
+                       └─ PipeWorld.Collect(Pieces)      list every piece to draw
+                    PipeRenderer.Render(...)             how to draw it (OpenGL), into the view's rectangle
                     ▼
                  SwapBuffers                             show it
 ```
@@ -28,7 +28,7 @@ There are three layers, and each only talks to the one below it:
 
 | Layer | Files | Knows about |
 |---|---|---|
-| Host | `Program.cs`, `GLHost.cs`, `Native/Win32.cs` | Windows: windows, messages, the OpenGL context, screensaver command-line rules |
+| Host | `Program.cs`, `GLHost.cs`, `View.cs`, `Native/Win32.cs` | Windows: windows, messages, monitors, the OpenGL context, screensaver command-line rules |
 | Scene | `Scene.cs`, `Simulation/*` | Pipes, the grid, the camera. **No OpenGL at all.** |
 | Rendering | `Rendering/*` | OpenGL, shaders, meshes. Knows nothing about grids or pipe rules. |
 
@@ -40,8 +40,8 @@ graphics code, and the other way round.
 
 A Windows screensaver is just an `.exe` renamed to `.scr`. Windows launches it with a flag:
 
-- `/s`: run fullscreen. We make one borderless topmost window spanning the whole virtual desktop, so every monitor
-  is covered by a single scene.
+- `/s`: run fullscreen. We make one borderless topmost window covering the whole *virtual desktop* (the smallest
+  rectangle around all monitors). By default each monitor then gets its own scene; see *Views* below.
 - `/p <hwnd>`: draw into the little monitor picture in the Screen Saver Settings dialog. `<hwnd>` is that dialog's
   window handle, and our window becomes a **child** of it. This is why the project has no windowing library
   (GLFW, SDL...): they can't create a child window inside another program's window.
@@ -56,8 +56,48 @@ The frame loop in `GLHost.Run` is:
    and in fullscreen mode any of them ends the screensaver.
 2. Measure `dt`, the seconds since the last frame. It's clamped to 0.1s so a hitch (e.g. the PC waking up) doesn't
    make the pipes jump.
-3. `scene.Update(dt)`, then `renderer.Render(...)`.
+3. For each view: update its scene, then render it into its rectangle.
 4. `SwapBuffers`. VSync is on, so this waits for the monitor's refresh. That's what paces the loop: no busy-waiting.
+
+### Views: a scene per monitor
+
+A `View` (`View.cs`) is one independent picture: its own `Scene` (grid, pipes, colours, camera, timing) plus its
+own `PipeRenderer` (with render targets sized to it), drawn into one rectangle of the window.
+
+- Windowed, preview, and "one scene across all monitors": a single view covers the whole window.
+- Fullscreen with **Own scene on each monitor** (the default): `GLHost.MonitorLayout` asks Windows for every
+  monitor's rectangle (`EnumDisplayMonitors`) and makes a view for each.
+
+Why this matters on a real multi-monitor desktop, for example a portrait monitor left of the main one and a smaller
+one to the right, offset vertically:
+
+```
+ virtual desktop (what one window covers)
+┌──────┬─────────────────────┬──────────────┐
+│      │█████████████████████│░░░░░░░░░░░░░░│  ░ no monitor here: never seen
+│ port-│█ main monitor ██████│░░░░░░░░░░░░░░│
+│ rait │█████████████████████├──────────────┤
+│      │█████████████████████│ right monitor│
+│      ├─────────────────────┤              │
+│      │░░░░░░░░░░░░░░░░░░░░░│              │
+└──────┴─────────────────────┴──────────────┘
+```
+
+A single scene would be framed for the whole wide rectangle, so each monitor shows an awkward slice of it, and the
+hatched areas get rendered for nobody. With views, each monitor gets a scene framed for its own shape, and nothing
+is drawn where no monitor is. On the three-monitor desktop this was tested on, that made fullscreen about 15%
+cheaper even though it draws three complete scenes.
+
+A few details:
+
+- **Coordinates:** monitor rectangles come relative to the main monitor, so one left of it has a negative X. The
+  window's top-left is the virtual desktop's top-left, so each rectangle is shifted by that origin. Windows also
+  measures Y downwards, while OpenGL viewports measure it upwards, so `View.Render` flips it.
+- **One window, not one per monitor:** each window would wait for VSync separately in `SwapBuffers`, which can
+  divide the frame rate by the number of monitors.
+- **Rendering into a rectangle:** each renderer does all its passes in its own offscreen buffers at its own size.
+  Only the very last step (the post pass, or the final copy in classic mode) writes into the window, at the view's
+  offset. That's why `PipeRenderer.Render` takes a `targetX`/`targetY`.
 
 > **A bug worth learning from:** the window title used to show just "P". Win32 functions come in two flavours,
 > `...A` (ANSI, 1 byte per character) and `...W` (Unicode, UTF-16). The window was created with the W version,
@@ -73,8 +113,8 @@ The frame loop in `GLHost.Run` is:
 FadeIn ──► Growing ──► Hold ──► FadeOut ──► (new world) FadeIn ...
 ```
 
-Each new world is a fresh `PipeWorld` with a grid sized to the screen's aspect ratio (always 12 cells tall), and a
-new random camera angle. `Scene` also owns camera motion:
+Each new world is a fresh `PipeWorld` with a grid shaped to the view: 12 cells across its shorter side and as many
+as fit along the longer one (so a portrait monitor gets a tall grid), and a new random camera angle. `Scene` also owns camera motion:
 
 - **Still:** fixed.
 - **Orbit:** yaw (the left/right angle) increases slowly.
@@ -190,6 +230,9 @@ enum order, so `(JointStyle)_joints.SelectedIndex` converts directly.
 - For visual debugging, temporarily make a shader output an intermediate value, then render a shot. For example,
   in `PipeFragment`, `FragColor = vec4(vec3(ao), 1.0);` shows the ambient occlusion buffer directly. This is how
   the AO strength was tuned.
+- Add the word `monitors` to `/shot` or `/bench` to use the real fullscreen layout (every monitor, each with its
+  own view) instead of one width × height view. That's how the per-monitor mode was tested without taking over the
+  screens.
 - `Pipes.exe /bench bench.txt 300 1920 1080` renders 300 frames offscreen with no VSync and writes the average
   time per frame. `_gl.Finish()` before stopping the clock makes it include the GPU's work, not just the time the
   CPU took to queue commands. Combine it with `PIPES_SETTINGS` to compare settings.
