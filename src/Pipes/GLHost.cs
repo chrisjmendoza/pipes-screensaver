@@ -58,12 +58,9 @@ internal sealed unsafe class GLHost : IDisposable
     public void Run(PipesSettings settings)
     {
         CreateWindow(visible: true);
-        using var renderer = new PipeRenderer(_gl, RenderOptions.From(settings));
-        var scene = new Scene(settings, new Random());
-
         var (w, h) = ClientSize();
-        renderer.Resize(w, h);
-        scene.Start((float)w / Math.Max(1, h));
+        var perMonitor = _mode == HostMode.Fullscreen && settings.SeparateMonitors;
+        var views = CreateViews(settings, w, h, perMonitor, _ => new Random());
 
         if (_mode == HostMode.Fullscreen)
         {
@@ -71,59 +68,61 @@ internal sealed unsafe class GLHost : IDisposable
             if (Win32.GetCursorPos(out var p)) _initialCursor = p;
         }
 
-        var clock = Stopwatch.StartNew();
-        var last = clock.Elapsed.TotalSeconds;
-        while (_running)
+        try
         {
-            while (Win32.PeekMessage(out var msg, IntPtr.Zero, 0, 0, Win32.PM_REMOVE))
+            var clock = Stopwatch.StartNew();
+            var last = clock.Elapsed.TotalSeconds;
+            while (_running)
             {
-                if (msg.message == Win32.WM_QUIT) { _running = false; break; }
-                Win32.TranslateMessage(ref msg);
-                Win32.DispatchMessage(ref msg);
+                while (Win32.PeekMessage(out var msg, IntPtr.Zero, 0, 0, Win32.PM_REMOVE))
+                {
+                    if (msg.message == Win32.WM_QUIT) { _running = false; break; }
+                    Win32.TranslateMessage(ref msg);
+                    Win32.DispatchMessage(ref msg);
+                }
+                if (!_running) break;
+
+                // The Screen Saver Settings dialog destroys our parent when it closes or switches savers.
+                if (_mode == HostMode.Preview && !Win32.IsWindow(_parent)) break;
+
+                if (_resized)
+                {
+                    _resized = false;
+                    (w, h) = ClientSize();
+                    // A single view follows the window. Per-monitor views are fixed to the monitors.
+                    if (views.Count == 1) views[0].Resize(w, h);
+                }
+
+                var now = clock.Elapsed.TotalSeconds;
+                var dt = (float)Math.Min(now - last, 0.1); // clamp after hitches so pipes don't jump
+                last = now;
+
+                foreach (var view in views) view.Update(dt);
+                RenderViews(views, 0, w, h);
+                Win32.SwapBuffers(_hdc);
             }
-            if (!_running) break;
-
-            // The Screen Saver Settings dialog destroys our parent when it closes or switches savers.
-            if (_mode == HostMode.Preview && !Win32.IsWindow(_parent)) break;
-
-            if (_resized)
-            {
-                _resized = false;
-                (w, h) = ClientSize();
-                renderer.Resize(w, h);
-                scene.SetAspect((float)w / Math.Max(1, h));
-            }
-
-            var now = clock.Elapsed.TotalSeconds;
-            var dt = (float)Math.Min(now - last, 0.1); // clamp after hitches so pipes don't jump
-            last = now;
-
-            scene.Update(dt);
-            renderer.Render(scene.Camera, scene.Pieces, scene.Fade, targetFbo: 0);
-            Win32.SwapBuffers(_hdc);
         }
-
-        if (_mode == HostMode.Fullscreen) Win32.ShowCursor(true);
+        finally
+        {
+            foreach (var view in views) view.Dispose();
+            if (_mode == HostMode.Fullscreen) Win32.ShowCursor(true);
+        }
     }
 
-    /// <summary>Simulates <paramref name="seconds"/> of animation at a fixed step, renders one frame offscreen, saves a PNG.</summary>
-    public void Screenshot(PipesSettings settings, int width, int height, float seconds, string path, int seed)
+    /// <summary>
+    /// Simulates <paramref name="seconds"/> of animation at a fixed step, renders one frame offscreen, saves a PNG.
+    /// With <paramref name="monitors"/>, renders the whole desktop exactly as fullscreen mode would lay it out
+    /// (ignoring <paramref name="width"/>/<paramref name="height"/>).
+    /// </summary>
+    public void Screenshot(PipesSettings settings, int width, int height, float seconds, string path, int seed, bool monitors)
     {
-        using var renderer = new PipeRenderer(_gl, RenderOptions.From(settings));
-        var scene = new Scene(settings, new Random(seed));
-        renderer.Resize(width, height);
-        scene.Start((float)width / height);
-        for (var t = 0f; t < seconds; t += 1f / 60f) scene.Update(1f / 60f);
+        if (monitors) (width, height) = VirtualScreenSize();
+        var views = CreateViews(settings, width, height, monitors, i => new Random(seed + i));
+        for (var t = 0f; t < seconds; t += 1f / 60f)
+            foreach (var view in views) view.Update(1f / 60f);
 
-        // Render into an 8-bit target we can read back (the default framebuffer of a hidden window is undefined).
-        var fbo = _gl.GenFramebuffer();
-        var tex = _gl.GenTexture();
-        _gl.BindTexture(TextureTarget.Texture2D, tex);
-        _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, (uint)width, (uint)height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, null);
-        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
-        _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, tex, 0);
-
-        renderer.Render(scene.Camera, scene.Pieces, scene.Fade, fbo);
+        var (fbo, tex) = CreateReadbackTarget(width, height);
+        RenderViews(views, fbo, width, height);
 
         var pixels = new byte[width * height * 4];
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
@@ -132,6 +131,7 @@ internal sealed unsafe class GLHost : IDisposable
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
         _gl.DeleteFramebuffer(fbo);
         _gl.DeleteTexture(tex);
+        foreach (var view in views) view.Dispose();
 
         using var bmp = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
         var data = bmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.WriteOnly, bmp.PixelFormat);
@@ -144,41 +144,96 @@ internal sealed unsafe class GLHost : IDisposable
     /// <summary>
     /// Times rendering: simulates a busy scene, then renders <paramref name="frames"/> frames offscreen as fast as
     /// possible and writes the average GPU+CPU cost per frame to <paramref name="reportPath"/>. No VSync here, so
-    /// the number is the real work per frame, not the monitor's refresh interval.
+    /// the number is the real work per frame, not the monitor's refresh interval. With <paramref name="monitors"/>,
+    /// measures the real fullscreen layout instead of one <paramref name="width"/> x <paramref name="height"/> view.
     /// </summary>
-    public void Benchmark(PipesSettings settings, int width, int height, int frames, string reportPath)
+    public void Benchmark(PipesSettings settings, int width, int height, int frames, string reportPath, bool monitors)
     {
-        using var renderer = new PipeRenderer(_gl, RenderOptions.From(settings));
-        var scene = new Scene(settings, new Random(1));
-        renderer.Resize(width, height);
-        scene.Start((float)width / height);
-        for (var t = 0f; t < 12f; t += 1f / 60f) scene.Update(1f / 60f); // let the scene fill up first
+        if (monitors) (width, height) = VirtualScreenSize();
+        var views = CreateViews(settings, width, height, monitors, i => new Random(1 + i));
+        for (var t = 0f; t < 12f; t += 1f / 60f) // let the scenes fill up first
+            foreach (var view in views) view.Update(1f / 60f);
 
-        var fbo = _gl.GenFramebuffer();
-        var tex = _gl.GenTexture();
-        _gl.BindTexture(TextureTarget.Texture2D, tex);
-        _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, (uint)width, (uint)height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, null);
-        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
-        _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, tex, 0);
+        var (fbo, tex) = CreateReadbackTarget(width, height);
 
         // Warm up (shader compilation, driver caches), then time. Finish() waits for the GPU, so the clock covers
         // the GPU's work, not just the CPU queueing commands.
-        for (var i = 0; i < 30; i++) renderer.Render(scene.Camera, scene.Pieces, 1f, fbo);
+        for (var i = 0; i < 30; i++) RenderViews(views, fbo, width, height);
         _gl.Finish();
         var clock = Stopwatch.StartNew();
         for (var i = 0; i < frames; i++)
         {
-            scene.Update(1f / 60f);
-            renderer.Render(scene.Camera, scene.Pieces, 1f, fbo);
+            foreach (var view in views) view.Update(1f / 60f);
+            RenderViews(views, fbo, width, height);
         }
         _gl.Finish();
         var ms = clock.Elapsed.TotalMilliseconds / frames;
 
         _gl.DeleteFramebuffer(fbo);
         _gl.DeleteTexture(tex);
+        var pieces = views.Sum(v => v.Scene.Pieces[Simulation.MeshKind.Cylinder].Count + v.Scene.Pieces[Simulation.MeshKind.Sphere].Count);
+        foreach (var view in views) view.Dispose();
         File.WriteAllText(reportPath,
-            $"{settings.Style} {width}x{height} AA={settings.Antialiasing}: {ms:F2} ms/frame ({1000 / ms:F0} fps max), " +
-            $"{scene.Pieces[Simulation.MeshKind.Cylinder].Count + scene.Pieces[Simulation.MeshKind.Sphere].Count} pieces\n");
+            $"{settings.Style} {width}x{height} in {views.Count} view(s), AA={settings.Antialiasing}: " +
+            $"{ms:F2} ms/frame ({1000 / ms:F0} fps max), {pieces} pieces" + Environment.NewLine);
+    }
+
+    /// <summary>
+    /// One view covering the whole target, or (with <paramref name="perMonitor"/> and more than one monitor) one per
+    /// monitor, each placed where that monitor sits within the virtual desktop.
+    /// </summary>
+    private List<View> CreateViews(PipesSettings settings, int width, int height, bool perMonitor, Func<int, Random> rng)
+    {
+        if (perMonitor && MonitorLayout() is { Count: > 1 } monitors)
+            return [.. monitors.Select((m, i) => new View(_gl, settings, rng(i), m.X, m.Y, m.Width, m.Height))];
+        return [new View(_gl, settings, rng(0), 0, 0, width, height)];
+    }
+
+    private void RenderViews(List<View> views, uint targetFbo, int width, int height)
+    {
+        if (views.Count > 1)
+        {
+            // Monitors of different sizes or offsets leave parts of the virtual desktop that no screen shows. Nobody
+            // sees them live, but a screenshot would show leftover garbage there, so clear to black first.
+            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, targetFbo);
+            _gl.Viewport(0, 0, (uint)width, (uint)height);
+            _gl.ClearColor(0f, 0f, 0f, 1f);
+            _gl.Clear(ClearBufferMask.ColorBufferBit);
+        }
+        foreach (var view in views) view.Render(targetFbo, height);
+    }
+
+    /// <summary>
+    /// Every monitor's rectangle in window pixels. The fullscreen window covers the "virtual desktop", the smallest
+    /// rectangle around all monitors, whose top-left can be negative (a monitor left of or above the main one), so
+    /// each monitor is shifted by that origin. The process is per-monitor DPI aware, so these are real pixels.
+    /// </summary>
+    private static List<(int X, int Y, int Width, int Height)> MonitorLayout()
+    {
+        var originX = Win32.GetSystemMetrics(Win32.SM_XVIRTUALSCREEN);
+        var originY = Win32.GetSystemMetrics(Win32.SM_YVIRTUALSCREEN);
+        var monitors = new List<(int, int, int, int)>();
+        Win32.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr _, IntPtr _, ref Win32.RECT r, IntPtr _) =>
+        {
+            monitors.Add((r.Left - originX, r.Top - originY, r.Right - r.Left, r.Bottom - r.Top));
+            return true;
+        }, IntPtr.Zero);
+        return monitors;
+    }
+
+    private static (int Width, int Height) VirtualScreenSize() =>
+        (Win32.GetSystemMetrics(Win32.SM_CXVIRTUALSCREEN), Win32.GetSystemMetrics(Win32.SM_CYVIRTUALSCREEN));
+
+    /// <summary>An 8-bit offscreen target we can read back (the default framebuffer of a hidden window is undefined).</summary>
+    private (uint Fbo, uint Tex) CreateReadbackTarget(int width, int height)
+    {
+        var fbo = _gl.GenFramebuffer();
+        var tex = _gl.GenTexture();
+        _gl.BindTexture(TextureTarget.Texture2D, tex);
+        _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, (uint)width, (uint)height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, null);
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
+        _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, tex, 0);
+        return (fbo, tex);
     }
 
     private void CreateWindow(bool visible)

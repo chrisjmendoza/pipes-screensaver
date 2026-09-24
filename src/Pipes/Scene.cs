@@ -104,10 +104,22 @@ internal sealed class Scene
 
     private void NewWorld()
     {
-        // Grid shaped to the screen so the pipes fill it, like the original.
-        const int height = 12;
-        var width = Math.Clamp((int)MathF.Round(height * _aspect), 8, 48);
-        var depth = Math.Clamp((int)MathF.Round(height * 1.1f), 8, 20);
+        // Grid shaped to the screen so the pipes fill it, like the original: 12 cells across the screen's shorter
+        // side, and as many as fit along the longer one. So a landscape screen gets a wide grid and a portrait
+        // (rotated) monitor a tall one.
+        const int shortSide = 12;
+        int width, height;
+        if (_aspect >= 1f)
+        {
+            height = shortSide;
+            width = Math.Clamp((int)MathF.Round(shortSide * _aspect), shortSide, 48);
+        }
+        else
+        {
+            width = shortSide;
+            height = Math.Clamp((int)MathF.Round(shortSide / _aspect), shortSide, 48);
+        }
+        var depth = Math.Clamp((int)MathF.Round(shortSide * 1.1f), 8, 20);
         _world = new PipeWorld(new Int3(width, height, depth), _settings, _rng);
         _depth = depth;
 

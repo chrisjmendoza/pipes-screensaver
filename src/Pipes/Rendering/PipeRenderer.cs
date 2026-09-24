@@ -174,7 +174,12 @@ internal sealed unsafe class PipeRenderer : IDisposable
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
     }
 
-    public void Render(Camera camera, PieceLists pieces, float fade, uint targetFbo)
+    /// <summary>
+    /// Draw a frame into <paramref name="targetFbo"/> with its bottom-left corner at
+    /// (<paramref name="targetX"/>, <paramref name="targetY"/>). All the intermediate passes use this renderer's
+    /// own buffers; only the final output lands in the target, so several renderers can share one window.
+    /// </summary>
+    public void Render(Camera camera, PieceLists pieces, float fade, uint targetFbo, int targetX = 0, int targetY = 0)
     {
         UploadInstances(pieces);
 
@@ -184,7 +189,7 @@ internal sealed unsafe class PipeRenderer : IDisposable
             // Two copies: MSAA resolve into a same-format texture, then a plain copy to the target. Going straight
             // from the multisampled buffer to the window isn't allowed if their formats differ even slightly.
             Blit(_sceneFbo, _resolveFbo);
-            Blit(_resolveFbo, targetFbo);
+            Blit(_resolveFbo, targetFbo, targetX, targetY);
             return;
         }
 
@@ -202,7 +207,7 @@ internal sealed unsafe class PipeRenderer : IDisposable
             image = _dofTex;
         }
         if (_options.Bloom) BloomPass(image);
-        PostPass(image, fade, targetFbo);
+        PostPass(image, fade, targetFbo, targetX, targetY);
     }
 
     // ---- Passes ----
@@ -350,10 +355,10 @@ internal sealed unsafe class PipeRenderer : IDisposable
         _gl.Disable(EnableCap.Blend);
     }
 
-    private void PostPass(uint image, float fade, uint targetFbo)
+    private void PostPass(uint image, float fade, uint targetFbo, int targetX, int targetY)
     {
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, targetFbo);
-        _gl.Viewport(0, 0, (uint)_width, (uint)_height);
+        _gl.Viewport(targetX, targetY, (uint)_width, (uint)_height);
         _gl.Disable(EnableCap.DepthTest);
         _gl.UseProgram(_postProgram);
         BindTexture(_postProgram, "uScene", 0, image);
@@ -410,12 +415,15 @@ internal sealed unsafe class PipeRenderer : IDisposable
         }
     }
 
-    /// <summary>Copy one framebuffer's colour to another of the same size (resolving MSAA if the source has it).</summary>
-    private void Blit(uint from, uint to)
+    /// <summary>
+    /// Copy this renderer's full-size image from one framebuffer to another, placing it at (<paramref name="toX"/>,
+    /// <paramref name="toY"/>). Resolves MSAA if the source has it.
+    /// </summary>
+    private void Blit(uint from, uint to, int toX = 0, int toY = 0)
     {
         _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, from);
         _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, to);
-        _gl.BlitFramebuffer(0, 0, _width, _height, 0, 0, _width, _height, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+        _gl.BlitFramebuffer(0, 0, _width, _height, toX, toY, toX + _width, toY + _height, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
     }
 
     private void DrawFullscreen()

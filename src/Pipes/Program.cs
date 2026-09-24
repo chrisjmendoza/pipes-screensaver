@@ -10,8 +10,9 @@ namespace Pipes;
 ///   /c[:hwnd]     show settings (also used when the .scr is double-clicked with no args)
 /// Development extras:
 ///   /w                          run in a normal window (Esc to quit)
-///   /shot &lt;file.png&gt; [seconds] [width] [height] [seed]   render one frame offscreen and exit
-///   /bench &lt;report.txt&gt; [frames] [width] [height]         time rendering offscreen, write ms/frame
+///   /shot &lt;file.png&gt; [seconds] [width] [height] [seed] [monitors]   render one frame offscreen and exit
+///   /bench &lt;report.txt&gt; [frames] [width] [height] [monitors]        time rendering offscreen, write ms/frame
+/// Adding the word "monitors" to either uses the real fullscreen monitor layout instead of width x height.
 /// </summary>
 internal static class Program
 {
@@ -72,9 +73,10 @@ internal static class Program
         var width = int.Parse(At(3, "1920"), CultureInfo.InvariantCulture);
         var height = int.Parse(At(4, "1080"), CultureInfo.InvariantCulture);
         var seed = int.Parse(At(5, "1"), CultureInfo.InvariantCulture);
+        var monitors = HasFlag(args, "monitors");
 
         using var host = GLHost.CreateOffscreen();
-        host.Screenshot(settings, width, height, seconds, path, seed);
+        host.Screenshot(settings, width, height, seconds, path, seed, monitors);
     }
 
     private static void Benchmark(string[] args, PipesSettings settings)
@@ -84,10 +86,13 @@ internal static class Program
         var frames = int.Parse(At(2, "300"), CultureInfo.InvariantCulture);
         var width = int.Parse(At(3, "1920"), CultureInfo.InvariantCulture);
         var height = int.Parse(At(4, "1080"), CultureInfo.InvariantCulture);
+        var monitors = HasFlag(args, "monitors");
 
         using var host = GLHost.CreateOffscreen();
-        host.Benchmark(settings, width, height, frames, path);
+        host.Benchmark(settings, width, height, frames, path, monitors);
     }
+
+    private static bool HasFlag(string[] args, string flag) => args.Any(a => a.Equals(flag, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Accepts "/s", "-S", "/p 1234", "/p:1234", "/c:1234".</summary>
     private static (string Command, string? Argument) Parse(string[] args)

@@ -17,6 +17,8 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
   holds for a moment, fades out, and restarts from a new angle. The camera can stay still, orbit, or float.
 - **Classic (lite) mode:** for nostalgia, or a slower PC. It renders like the 1990s original: low-poly pipes lit
   per vertex on a black background, no effects. It uses roughly a tenth of the GPU time of the modern style.
+- **Multi-monitor aware:** each monitor gets its own scene, framed for its shape (portrait monitors too), and
+  nothing is rendered in the gaps between monitors. Or, if you prefer, one scene spanning them all.
 - **Proper screensaver:** fullscreen across all monitors, per-monitor high-DPI, works in the Screen Saver
   Settings preview box, and has a settings dialog.
 
@@ -34,14 +36,16 @@ dotnet build src/Pipes
 Render a still offscreen (no window appears). Handy for checking visual changes:
 
 ```powershell
-Pipes.exe /shot out.png [seconds=20] [width=1920] [height=1080] [seed=1]
+Pipes.exe /shot out.png [seconds=20] [width=1920] [height=1080] [seed=1] [monitors]
 ```
+
+Add `monitors` to render your whole desktop exactly as fullscreen would lay it out, one scene per monitor.
 
 To measure how expensive a settings combination is, `/bench` renders a few hundred frames offscreen (no VSync)
 and writes the average time per frame to a text file:
 
 ```powershell
-Pipes.exe /bench bench.txt [frames=300] [width=1920] [height=1080]
+Pipes.exe /bench bench.txt [frames=300] [width=1920] [height=1080] [monitors]
 ```
 
 To try settings without touching your real ones, point `PIPES_SETTINGS` at another JSON file:
@@ -68,8 +72,8 @@ an elevated PowerShell. That copies it to System32 so "Pipes" appears in the Scr
 | `/p <hwnd>` | Draw inside the Screen Saver Settings preview |
 | `/c[:hwnd]` or none | Settings dialog |
 | `/w` | Windowed (dev) |
-| `/shot <png> [s] [w] [h] [seed]` | Offscreen still (dev) |
-| `/bench <txt> [frames] [w] [h]` | Time rendering, write ms/frame (dev) |
+| `/shot <png> [s] [w] [h] [seed] [monitors]` | Offscreen still (dev) |
+| `/bench <txt> [frames] [w] [h] [monitors]` | Time rendering, write ms/frame (dev) |
 
 Settings are stored at `%LOCALAPPDATA%\PipesScreensaver\settings.json`.
 
@@ -78,7 +82,8 @@ Settings are stored at `%LOCALAPPDATA%\PipesScreensaver\settings.json`.
 ```
 src/Pipes/
   Program.cs              argument parsing, mode dispatch
-  GLHost.cs               bare Win32 window + WGL context (fullscreen / preview / windowed / offscreen)
+  GLHost.cs               bare Win32 window + WGL context (fullscreen / preview / windowed / offscreen), monitor layout
+  View.cs                 one scene + renderer drawn into one rectangle (one per monitor in fullscreen)
   Scene.cs                scene lifecycle: fade in, grow, hold, fade out; camera motion
   PipesSettings.cs        settings model + JSON persistence
   ConfigForm.cs           settings dialog (WinForms, code-only)
