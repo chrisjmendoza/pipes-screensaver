@@ -127,9 +127,44 @@ internal sealed class ConfigForm : Form
 
     private static ComboBox Dropdown(params string[] items)
     {
-        var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+        var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
         combo.Items.AddRange(items);
         return combo;
+    }
+
+    protected override void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);
+        // Sized here rather than when the dropdowns are created: only now are the final font and screen scaling
+        // (DPI) known, and text measured earlier would come out too small on a scaled display.
+        FitDropdowns(this);
+    }
+
+    /// <summary>
+    /// Make every dropdown wide enough for its longest item, and all of them the same width so the column lines up.
+    /// A fixed pixel width cut off longer labels, especially with Windows display scaling above 100%.
+    /// </summary>
+    private void FitDropdowns(Control root)
+    {
+        var combos = new List<ComboBox>();
+        void Collect(Control c)
+        {
+            if (c is ComboBox combo) combos.Add(combo);
+            foreach (Control child in c.Controls) Collect(child);
+        }
+        Collect(root);
+
+        var width = LogicalToDeviceUnits(170); // minimum, scaled for the display
+        foreach (var combo in combos)
+        {
+            foreach (var item in combo.Items)
+            {
+                var text = TextRenderer.MeasureText(item.ToString(), combo.Font).Width;
+                // Room for the arrow button and the control's own padding.
+                width = Math.Max(width, text + SystemInformation.VerticalScrollBarWidth + LogicalToDeviceUnits(12));
+            }
+        }
+        foreach (var combo in combos) combo.Width = width;
     }
 
     private static CheckBox Check(string text) => new() { Text = text, AutoSize = true };
