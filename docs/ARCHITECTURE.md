@@ -159,11 +159,32 @@ units, so "distance along the path" is just an index. Two properties matter:
   curve), so there's no jolt.
 - It looks at a point 5 units further along the path, so it turns into bends slightly early, the way a driver
   looks into a corner.
-- **Keeping "up" sensible.** The usual camera uses the world's up direction. That breaks when flying straight up
-  or down, since "up" would point along the view and the view would spin. Instead, the camera keeps its own up
-  vector, and every frame removes whatever part of it points forward:
-  `up = normalize(up − forward × dot(up, forward))`. This "parallel transport" carries the roll smoothly through
-  every turn.
+- **Banking like a plane** (`Scene.BankedUp`). A plane doesn't skid sideways into a turn: it rolls until the turn
+  is "overhead", pulls back on the stick, and rolls level afterwards. The camera follows one rule: **during a turn,
+  its up points at the turn's centre**. The maneuvers all follow from that:
+
+  | Turn | What happens |
+  |---|---|
+  | Left / right | roll 90° into it, pull round, roll back level |
+  | Up | no roll needed (the centre is already overhead): just pull up |
+  | Down | roll 180° onto your back, pull through into the dive |
+  | Out of a vertical climb or dive | the roll happens *during* the vertical stretch (there's no horizon to be level with), so the next turn is a clean pull |
+
+  Some real aerobatic maneuvers come out of this without being programmed. A climb that turns back the way it
+  came is an **Immelmann** (pull up, over the top, roll upright). A dive becomes roll, pull down, spin mid-dive,
+  pull out level.
+
+  Each turn has a *roll-in* just before its arc, the arc itself (up locked on the centre), and a *roll-out* just
+  after. Rolls are eased with smoothstep, and a 180° roll takes 8 units of path against 6.5 for 90°. Between
+  turns, "level" means world up when flying horizontally. When flying vertically it means facing the next turn's
+  centre.
+
+  Two implementation notes worth copying elsewhere:
+  - The up vector is a **pure function of how far along the path** the camera is, not something updated a bit each
+    frame. So it can't drift, and the same moment of a flight always looks the same (handy with `/shot`).
+  - Rolling uses **Rodrigues' rotation formula**: rotating `v` by angle θ around a unit axis `k` gives
+    `v·cos θ + (k × v)·sin θ + k·(k·v)(1 − cos θ)`. The signed angle between two vectors around an axis is
+    `atan2(axis · (a × b), a · b)`.
 - **Recycling:** every frame, chunks whose centre is more than 14 units behind the camera are dropped with
   `PipeWorld.Recycle`, including their geometry, their occupied cells, and any pipe still growing there. Memory and
   drawing cost stay flat: a two-minute flight held steady at about 115 MB.

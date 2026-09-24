@@ -32,3 +32,4 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - Classic (lite) style: the original's look at about a tenth of the GPU cost
 - A scene per monitor (with portrait-aware grids), and no rendering in the gaps between monitors
 - Fly-through: the camera dives into the finished scene and flies on through an endless, self-building tunnel
+- Banking: the fly-through camera rolls through turns like a plane (including 180° rolls into dives)
