@@ -165,23 +165,29 @@ units, so "distance along the path" is just an index. Two properties matter:
 
   | Turn | What happens |
   |---|---|
-  | Left / right | roll 90° into it, pull round, roll back level |
+  | Left / right | roll 90° into it, pull round, level out (to upright, or inverted if it was flying inverted) |
   | Up | no roll needed (the centre is already overhead): just pull up |
   | Down | roll 180° onto your back, pull through into the dive |
-  | Out of a vertical climb or dive | the roll happens *during* the vertical stretch (there's no horizon to be level with), so the next turn is a clean pull |
+  | Any pull (up, down, out of a climb or dive) | no roll afterwards: the attitude it ends with is the new level |
 
-  Some real aerobatic maneuvers come out of this without being programmed. A climb that turns back the way it
-  came is an **Immelmann** (pull up, over the top, roll upright). A dive becomes roll, pull down, spin mid-dive,
-  pull out level.
+  **It's treated like flying through space.** The tunnel has no horizon, so upside down is just another attitude:
+  whatever a turn leaves the camera in becomes the new "level", and nothing rolls back afterwards. If the next turn
+  needs a different attitude, it rolls in just before that turn. The only roll-out is after a left or right turn,
+  which leaves the camera on its side. That levels out like a plane, to upright or inverted, whichever it was
+  flying before.
+
+  This took a couple of rounds to get right, which is typical of "feel" work. The first version rolled back
+  upright after every maneuver, and then tried rolling to line up with the next turn straight after pulling into a
+  climb. Both looked wrong in motion: a roll straight after a pull reads as the camera correcting itself.
 
   Each turn has a *roll-in* just before its arc, the arc itself (up locked on the centre), and a *roll-out* just
-  after. Rolls are eased with smoothstep, and a 180° roll takes 8 units of path against 6.5 for 90°. Between
-  turns, "level" means world up when flying horizontally. When flying vertically it means facing the next turn's
-  centre.
+  after (when there is one). Rolls are eased with smoothstep, and a 180° roll takes 8 units of path against 6.5 for
+  90°.
 
   Two implementation notes worth copying elsewhere:
   - The up vector is a **pure function of how far along the path** the camera is, not something updated a bit each
-    frame. So it can't drift, and the same moment of a flight always looks the same (handy with `/shot`).
+    frame. Each frame replays the turns from the start of the flight to work out the current "level" (a few dozen
+    at most). So it can't drift, and the same moment of a flight always looks the same (handy with `/shot`).
   - Rolling uses **Rodrigues' rotation formula**: rotating `v` by angle θ around a unit axis `k` gives
     `v·cos θ + (k × v)·sin θ + k·(k·v)(1 − cos θ)`. The signed angle between two vectors around an axis is
     `atan2(axis · (a × b), a · b)`.

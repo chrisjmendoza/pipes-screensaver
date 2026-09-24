@@ -52,7 +52,6 @@ public sealed class FlightPath
     {
         _rng = rng;
         _direction = direction;
-        StartDirection = direction.ToVector();
         _usedDirections.Add(direction);
         _currentFlow = NextFlow();
         AddPoint(start, direction.ToVector());
@@ -61,9 +60,6 @@ public sealed class FlightPath
 
     /// <summary>Length generated so far, in world units.</summary>
     public float Length => (_points.Count - 1) * Spacing;
-
-    /// <summary>Direction of the first straight, before any turn.</summary>
-    public Vector3 StartDirection { get; }
 
     /// <summary>Every turn generated so far, in order along the path.</summary>
     public IReadOnlyList<Turn> Turns => _turns;

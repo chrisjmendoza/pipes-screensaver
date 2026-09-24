@@ -204,42 +204,37 @@ internal sealed class Scene
     /// <item>Turn downwards: roll 180° onto your back so the dive is overhead, then pull through it.</item>
     /// </list>
     /// <para>
-    /// Each turn therefore has three parts along the path: a roll-in just before the arc, the arc itself (up locked
-    /// onto the centre), and a roll-out just after it. Between turns the camera flies "level": world up while flying
-    /// horizontally. While flying straight up or down there's no horizon to be level with, so "level" means lined up
-    /// for the next turn. The roll then happens mid-climb or mid-dive, and the next turn is a clean pull. A dive
-    /// becomes: roll onto your back, pull into the dive, spin to face the way out, pull out level. A climb that
-    /// leaves the way it came becomes an Immelmann: pull up, over the top, roll upright.
+    /// Each turn therefore has three parts along the path: a roll-in just before the arc (only if the camera isn't
+    /// already facing the turn), the arc itself (up locked onto the centre), and sometimes a roll-out just after it.
     /// </para>
     /// <para>
-    /// This is a pure function of the distance flown, not something accumulated frame by frame. So it can't drift,
-    /// and the same point of the flight always looks the same.
+    /// <b>There's no horizon</b>, so it's treated like flying through space: whatever attitude a turn ends with is
+    /// the new "level", upside down included, and nothing rolls back afterwards. The one exception is a left or
+    /// right turn, which leaves the camera on its side. That levels out, like a plane, to upright or inverted,
+    /// whichever it was flying before the turn.
+    /// </para>
+    /// <para>
+    /// This is a pure function of the distance flown, not something accumulated frame by frame: each call replays the
+    /// turns from the start of the flight (a few dozen at most). So it can't drift, and the same point of the flight
+    /// always looks the same.
     /// </para>
     /// </remarks>
     private Vector3 BankedUp(Vector3 position, Vector3 forward)
     {
         var s = _flightS;
-        var turns = _path!.Turns;
-        FlightPath.Turn? previous = null;
-        FlightPath.Turn? upcoming = null;
+        var level = Vector3.UnitY; // the attitude on the first straight, facing the box
 
-        for (var i = 0; i < turns.Count; i++)
+        foreach (var turn in _path!.Turns)
         {
-            var turn = turns[i];
-            FlightPath.Turn? next = i + 1 < turns.Count ? turns[i + 1] : null;
-            var levelBefore = LevelUp(turn.From, turn, previous);
-            var levelAfter = LevelUp(turn.To, next, turn);
+            var levelBefore = level;
+            var levelAfter = LevelAfter(turn, levelBefore);
             // On the approach, the turn's centre lies exactly along turn.To; on the way out, exactly behind (-From).
             var rollIn = SignedAngle(levelBefore, turn.To, turn.From);
             var rollOut = SignedAngle(-turn.From, levelAfter, turn.To);
             var rollInStart = turn.StartS - RollDistance(rollIn);
             var rollOutEnd = turn.EndS + RollDistance(rollOut);
 
-            if (s < rollInStart)
-            {
-                upcoming = turn; // this turn (and every later one) hasn't started yet
-                break;
-            }
+            if (s < rollInStart) break; // this turn (and every later one) hasn't started yet
 
             if (s < turn.StartS) // rolling in
                 return Rotate(levelBefore, forward, rollIn * Ease((s - rollInStart) / (turn.StartS - rollInStart)));
@@ -250,24 +245,25 @@ internal sealed class Scene
             if (s < rollOutEnd) // rolling out
                 return Rotate(-turn.From, forward, rollOut * Ease((s - turn.EndS) / (rollOutEnd - turn.EndS)));
 
-            previous = turn;
+            level = levelAfter;
         }
 
         // On a straight, between turns.
-        return Perpendicular(LevelUp(previous?.To ?? _path.StartDirection, upcoming, previous), forward);
+        return Perpendicular(level, forward);
     }
 
     /// <summary>
-    /// "Level" while travelling along <paramref name="direction"/>. Horizontal: world up. Vertical: facing the centre
-    /// of the <paramref name="nextTurn"/> (which is the direction it turns towards), so that turn needs no roll. If
-    /// that isn't known yet, keep the attitude the <paramref name="previousTurn"/> ended with (facing back the way
-    /// it came).
+    /// The attitude a turn leaves the camera in. It pulls through with up facing the turn's centre, which at the end
+    /// of the turn lies straight back along the old direction (<c>-From</c>), and that simply becomes the new level.
+    /// Except after a left/right turn in horizontal flight, which leaves the camera on its side. That levels out to
+    /// upright or inverted, whichever it was flying before.
     /// </summary>
-    private static Vector3 LevelUp(Vector3 direction, FlightPath.Turn? nextTurn, FlightPath.Turn? previousTurn)
+    private static Vector3 LevelAfter(FlightPath.Turn turn, Vector3 levelBefore)
     {
-        if (MathF.Abs(direction.Y) < 0.5f) return Vector3.UnitY;
-        if (nextTurn is { } next) return next.To;
-        return previousTurn is { } prev ? -prev.From : Vector3.UnitY;
+        var pulled = -turn.From;
+        var onItsSide = MathF.Abs(turn.To.Y) < 0.5f && MathF.Abs(pulled.Y) < 0.5f;
+        if (!onItsSide) return pulled;
+        return levelBefore.Y < 0f ? -Vector3.UnitY : Vector3.UnitY;
     }
 
     /// <summary>
