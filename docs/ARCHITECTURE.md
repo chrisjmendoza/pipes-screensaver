@@ -154,13 +154,27 @@ owns camera motion:
 In this mode the scene builds as usual, then the camera takes off, dives into the pipes, and flies on through a
 tunnel that keeps building itself ahead. Three pieces make it work.
 
-**The flight path** (`Simulation/FlightPath.cs`): straight runs along grid axes (18–40 units), joined by wide
-quarter-circle turns (radius 8). It's generated on demand, ahead of the camera, and stored as points every 0.5
-units, so "distance along the path" is just an index. Two properties matter:
+**The flight path** (`Simulation/FlightPath.cs`): straight runs along grid axes (18–40 units), joined by
+*maneuvers*. It's generated on demand, ahead of the camera, and stored as points every 0.5 units, so "distance
+along the path" is just an index. The maneuvers, all built from circular arcs:
+
+| Maneuver | Shape | How often |
+|---|---|---|
+| Turn | quarter circle, radius 8, into a new direction | 55% |
+| Sweep | quarter circle, radius 22–30: a long, lazy curve into a new direction | 25% |
+| Meander | shallow arcs (radius 18–26) swinging 20–30° side to side, 2–4 times, then straightening up the same way | 20% |
+
+A meander's swings are `+θ, −2θ, +2θ, …, ±θ`: they add up to no turn, so it comes out heading exactly the way it
+went in.
+
+Two properties matter:
 
 - **It never doubles back.** Once it has moved in a direction (say +X), it's never allowed to move in the opposite
   one (−X). So it only ever advances along each axis, and can't loop round into the tunnel it already built. There
-  are always at least two turns left to choose from, so it never gets stuck.
+  are always at least two turns left to choose from, so it never gets stuck. A meander wanders a few units back and
+  forth sideways, but its sideways axis is picked like a turn, so its overall drift obeys the rule. Checked on six
+  flights: no two parts of the path at least 40 units apart ever came closer than 30 units (the tunnel walls would
+  only touch at 13).
 - **Fast "how far from the path?" lookups.** Path points are filed in 8-unit buckets, so finding the nearest point
   to a cell only checks the 27 buckets around it, not the whole path.
 
@@ -217,11 +231,27 @@ units, so "distance along the path" is just an index. Two properties matter:
     the bank angle early), so they arrive level instead of overshooting the heading. Here the roll-out starts
     25–45% of the way before the end of the arc, and takes the overbank back out with it.
 
-  Each turn gets a random `Seed` when the path is built, and `Scene.Quirk` turns it into the overbank, the roll-out
+  Each maneuver gets a random `Seed` when the path is built, and `Scene.Quirk` turns it into the overbank, the roll-out
   lead, and a ±15% roll-in pace. So no two turns are flown quite alike, but replaying the same turn gives the same
   answer (the "pure function" property below still holds). On top of that there's a faint **stick wobble**: two
   slow sine waves adding up to about ±2° of roll. Measured through a flight, a right turn now goes: roll in to
   about 100°, settle at 92–97° through the corner, roll out in one motion, swing about 7° past level, and settle.
+
+  **Sweeps and meanders bank partly** (`Scene.GentleCurve`). "Up points at the centre" would put a lazy curve at a
+  full 90° too. Instead the camera keeps its level and banks by **how sharply the path curves sideways**:
+  `bank = atan(sideways curvature × 22)`, capped at 60°. That's the coordinated-turn formula real planes follow,
+  `tan(bank) = speed² ÷ (radius × g)`: a tighter turn needs a steeper bank. So a radius-22 sweep banks 45°, a
+  radius-30 one 36°. A curve straight up or down (relative to the camera) has no sideways part, so it just pitches,
+  like cresting a hill.
+  - **Curvature** is how fast the direction of travel changes per unit flown. Averaged over a stretch it's simply
+    `(direction at far end − direction at near end) ÷ length`. Taking the stretch 4 units either side of the camera
+    smooths the bank in and out, and starts it a moment *before* the curve, as a pilot would.
+  - **Level through a curve** is carried along by the smallest rotation from the old direction of travel to the
+    current one. For a curve in one plane that's exactly what *parallel transport* gives: how up moves if you don't
+    roll at all. So a sideways sweep keeps the camera upright, and a sweep upwards tips its up over backwards.
+
+  Measured: sideways sweeps hold 36–44° through the curve; meanders weave between about +50° and −50°, like flying
+  down a snake; vertical sweeps don't roll.
 
   Two implementation notes worth copying elsewhere:
   - The *target* up vector is a **pure function of how far along the path** the camera is, not something updated a

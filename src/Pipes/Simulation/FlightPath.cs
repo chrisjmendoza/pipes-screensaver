@@ -3,8 +3,8 @@ using System.Numerics;
 namespace Pipes.Simulation;
 
 /// <summary>
-/// The camera's route in fly-through mode: straight runs along grid axes, joined by wide quarter-circle turns,
-/// generated as far ahead as needed.
+/// The camera's route in fly-through mode: straight runs along grid axes, joined by maneuvers (quarter-circle turns,
+/// long sweeping bends and snaking meanders), generated as far ahead as needed.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -15,23 +15,42 @@ namespace Pipes.Simulation;
 /// <para>
 /// <b>It never doubles back.</b> Once the path has moved in some direction (say +X), it may never move in the
 /// opposite one (−X). So along every axis it only ever advances, and it can't loop round into the tunnel it already
-/// built. At every turn at least two directions remain allowed, so it never gets stuck.
+/// built. At every turn at least two directions remain allowed, so it never gets stuck. (A meander does wander a few
+/// units back and forth sideways, but its overall drift obeys the rule, and a few units is well inside the gap to any
+/// older tunnel.)
 /// </para>
 /// </remarks>
 public sealed class FlightPath
 {
+    /// <summary>The kinds of maneuver joining the straights.</summary>
+    public enum Kind
+    {
+        /// <summary>A tight quarter circle (radius 8) into a new direction: the camera banks hard, like a plane.</summary>
+        Turn,
+
+        /// <summary>A long, wide quarter circle (radius 22–30) into a new direction: a lazy, half-banked curve.</summary>
+        Sweep,
+
+        /// <summary>A snaking string of shallow arcs, swinging side to side, that ends up heading the same way.</summary>
+        Meander,
+    }
+
     /// <summary>
-    /// One quarter-circle turn: it runs from <see cref="StartS"/> to <see cref="EndS"/> along the path, around
-    /// <see cref="Centre"/>, from travelling along <see cref="From"/> to travelling along <see cref="To"/>.
-    /// <see cref="Seed"/> is a random number between 0 and 1 picked for this turn, so anything that should vary from
-    /// turn to turn (like how a "pilot" flies it) can vary, yet come out the same every time the turn is replayed.
+    /// One maneuver: it runs from <see cref="StartS"/> to <see cref="EndS"/> along the path, from travelling along
+    /// <see cref="From"/> to travelling along <see cref="To"/> (the same, for a meander). Turns and sweeps are quarter
+    /// circles around <see cref="Centre"/>. <see cref="Seed"/> is a random number between 0 and 1 picked for this
+    /// maneuver, so anything that should vary from one to the next (like how a "pilot" flies it) can vary, yet come
+    /// out the same every time it's replayed.
     /// </summary>
-    public readonly record struct Turn(float StartS, float EndS, Vector3 Centre, Vector3 From, Vector3 To, float Seed);
+    public readonly record struct Maneuver(Kind Kind, float StartS, float EndS, Vector3 Centre, Vector3 From, Vector3 To, float Seed);
 
     public const float Spacing = 0.5f;
 
     /// <summary>Radius of the turns. Wide enough that a turn feels like banking, not snapping round a corner.</summary>
     private const float TurnRadius = 8f;
+
+    /// <summary>How often each maneuver comes up: mostly classic turns, with the gentler ones mixed in.</summary>
+    private const float TurnChance = 0.55f, SweepChance = 0.25f; // meanders get the rest
 
     /// <summary>Turns up or down are rarer than left or right, which feels more natural.</summary>
     private const float VerticalTurnWeight = 0.35f;
@@ -45,7 +64,7 @@ public sealed class FlightPath
     private readonly List<int> _flow = [];
     private readonly Dictionary<Int3, List<int>> _buckets = [];
     private readonly HashSet<Int3> _usedDirections = [];
-    private readonly List<Turn> _turns = [];
+    private readonly List<Maneuver> _maneuvers = [];
     private Int3 _direction;
     private int _currentFlow;
 
@@ -63,8 +82,8 @@ public sealed class FlightPath
     /// <summary>Length generated so far, in world units.</summary>
     public float Length => (_points.Count - 1) * Spacing;
 
-    /// <summary>Every turn generated so far, in order along the path.</summary>
-    public IReadOnlyList<Turn> Turns => _turns;
+    /// <summary>Every maneuver generated so far, in order along the path.</summary>
+    public IReadOnlyList<Maneuver> Maneuvers => _maneuvers;
 
     /// <summary>Position and direction of travel at distance <paramref name="s"/> along the path.</summary>
     public (Vector3 Position, Vector3 Tangent) Pose(float s)
@@ -82,7 +101,7 @@ public sealed class FlightPath
     {
         while (Length < s)
         {
-            AddTurn();
+            AddManeuver();
             AddStraight(18f + _rng.NextSingle() * 22f);
         }
     }
@@ -121,30 +140,85 @@ public sealed class FlightPath
         for (var i = 1; i <= n; i++) AddPoint(start + d * (i * Spacing), d);
     }
 
+    private void AddManeuver()
+    {
+        var roll = _rng.NextSingle();
+        if (roll < TurnChance) AddQuarter(Kind.Turn, TurnRadius);
+        else if (roll < TurnChance + SweepChance) AddQuarter(Kind.Sweep, float.Lerp(22f, 30f, _rng.NextSingle()));
+        else AddMeander();
+    }
+
     /// <summary>A quarter circle from the current direction into a new, perpendicular one.</summary>
-    private void AddTurn()
+    private void AddQuarter(Kind kind, float radius)
     {
         var next = PickTurn();
         var d1 = _direction.ToVector();
         var d2 = next.ToVector();
-        var start = _points[^1];
         var startS = Length;
-        var centre = start + d2 * TurnRadius;
+        var centre = _points[^1] + d2 * radius;
         _currentFlow = NextFlow(); // each new stretch picks its own flow
 
-        // Same maths as a pipe elbow: from the centre, the arc starts at -d2 and sweeps round to +d1.
-        var arcLength = MathF.PI * 0.5f * TurnRadius;
-        var n = (int)MathF.Round(arcLength / Spacing);
-        for (var i = 1; i <= n; i++)
-        {
-            var theta = MathF.PI * 0.5f * i / n;
-            var p = centre + (-d2 * MathF.Cos(theta) + d1 * MathF.Sin(theta)) * TurnRadius;
-            AddPoint(p, d1 * MathF.Cos(theta) + d2 * MathF.Sin(theta));
-        }
+        AddArc(d1, d2, radius, MathF.PI * 0.5f);
 
-        _turns.Add(new Turn(startS, Length, centre, d1, d2, _rng.NextSingle()));
+        _maneuvers.Add(new Maneuver(kind, startS, Length, centre, d1, d2, _rng.NextSingle()));
         _direction = next;
         _usedDirections.Add(next);
+    }
+
+    /// <summary>
+    /// A meander: swing off to one side by a shallow angle, then back and forth across the original line a few times,
+    /// and finally straighten up, heading the way it started. Every swing is a circular arc, and they add up to no
+    /// turn at all:
+    /// <code>
+    ///   +θ, −2θ, +2θ, ..., then ±θ to straighten up
+    /// </code>
+    /// The swings happen in the plane of the travel direction and a sideways direction the path is allowed to drift
+    /// towards (picked like a turn), so the few units it wanders sideways are mostly in an allowed direction.
+    /// </summary>
+    private void AddMeander()
+    {
+        var forward = _direction.ToVector();
+        var side = PickTurn();
+        var across = side.ToVector();
+        var radius = float.Lerp(18f, 26f, _rng.NextSingle());
+        var swing = float.Lerp(20f, 30f, _rng.NextSingle()) * MathF.PI / 180f;
+        var swings = 1 + _rng.Next(3); // full side-to-side swings in the middle
+        var startS = Length;
+
+        // heading = forward·cos(angle) + across·sin(angle): angle is how far it has swung off the original line.
+        var angle = 0f;
+        void SwingTo(float target)
+        {
+            var heading = forward * MathF.Cos(angle) + across * MathF.Sin(angle);
+            // Perpendicular to the heading, in the swing plane, on the side it's turning towards.
+            var toward = (-forward * MathF.Sin(angle) + across * MathF.Cos(angle)) * MathF.Sign(target - angle);
+            AddArc(heading, toward, radius, MathF.Abs(target - angle));
+            angle = target;
+        }
+
+        SwingTo(swing);
+        for (var i = 0; i < swings; i++) SwingTo(-angle);
+        SwingTo(0f);
+
+        _maneuvers.Add(new Maneuver(Kind.Meander, startS, Length, Vector3.Zero, forward, forward, _rng.NextSingle()));
+        _usedDirections.Add(side); // it drifted that way, so it may never head back the other way
+    }
+
+    /// <summary>
+    /// A circular arc from the path's end: starting along <paramref name="heading"/>, curving towards
+    /// <paramref name="toward"/> (perpendicular to it) by <paramref name="angle"/> radians.
+    /// </summary>
+    private void AddArc(Vector3 heading, Vector3 toward, float radius, float angle)
+    {
+        // Same maths as a pipe elbow: from the centre, the arc starts at -toward and sweeps round towards +heading.
+        var centre = _points[^1] + toward * radius;
+        var n = Math.Max(1, (int)MathF.Round(angle * radius / Spacing));
+        for (var i = 1; i <= n; i++)
+        {
+            var theta = angle * i / n;
+            var (sin, cos) = MathF.SinCos(theta);
+            AddPoint(centre + (-toward * cos + heading * sin) * radius, heading * cos + toward * sin);
+        }
     }
 
     private Int3 PickTurn()

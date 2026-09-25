@@ -42,6 +42,16 @@ internal sealed class Scene
     /// <summary>Multiply by this to turn degrees into radians.</summary>
     private const float Degrees = MathF.PI / 180f;
 
+    /// <summary>
+    /// How steeply the camera banks into a gentle curve: bank = atan(sideways curvature × this). A curve of radius
+    /// 22 banks 45°, radius 30 about 36°. Physically this is the coordinated-turn formula, tan(bank) = speed² ÷
+    /// (radius × gravity), with this constant standing in for speed² ÷ gravity.
+    /// </summary>
+    private const float BankPerCurvature = 22f;
+
+    /// <summary>Gentle curves never bank steeper than this.</summary>
+    private const float MaxGentleBank = 60f * Degrees;
+
     private readonly PipesSettings _settings;
     private readonly Random _rng;
 
@@ -245,7 +255,10 @@ internal sealed class Scene
     /// </list>
     /// <para>
     /// How steep, how early, and how quickly each roll-in happens varies a little with each turn's
-    /// <see cref="FlightPath.Turn.Seed"/>, so no two turns are flown quite the same.
+    /// <see cref="FlightPath.Maneuver.Seed"/>, so no two turns are flown quite the same.
+    /// </para>
+    /// <para>
+    /// <b>Sweeps and meanders</b> are gentler and banked differently: see <see cref="GentleCurve"/>.
     /// </para>
     /// <para>
     /// <b>There's no horizon</b>, so it's treated like flying through space: whatever attitude a turn ends with is
@@ -255,7 +268,7 @@ internal sealed class Scene
     /// </para>
     /// <para>
     /// This is a pure function of the distance flown, not something accumulated frame by frame: each call replays the
-    /// turns from the start of the flight (a few dozen at most). So it can't drift, and the same point of the flight
+    /// maneuvers from the start of the flight (a few dozen at most). So it can't drift, and the same point of the flight
     /// always looks the same. It's the attitude the camera is <i>aiming</i> for: <see cref="FollowRoll"/> then adds
     /// the momentum on top.
     /// </para>
@@ -264,44 +277,109 @@ internal sealed class Scene
     {
         var s = _flightS;
         var level = Vector3.UnitY; // the attitude on the first straight, facing the box
+        _path!.EnsureLength(s + 20f); // the gentle curves look a little ahead; make sure the path is there
 
-        foreach (var turn in _path!.Turns)
+        foreach (var maneuver in _path.Maneuvers)
         {
-            var levelBefore = level;
-            var levelAfter = LevelAfter(turn, levelBefore);
-            // On the approach, the turn's centre lies exactly along turn.To; on the way out, exactly behind (-From).
-            var rollIn = SignedAngle(levelBefore, turn.To, turn.From);
-            var rollOut = SignedAngle(-turn.From, levelAfter, turn.To);
-
-            // This turn's pilot quirks. Overbank only happens when there's a roll-in to carry on past.
-            var overbank = rollIn == 0f ? 0f : MathF.Sign(rollIn) * float.Lerp(3f, 8f, Quirk(turn.Seed, 1)) * Degrees;
-            var rollInLength = MathF.Min(RollDistance(rollIn, SpeedFactor) * float.Lerp(0.85f, 1.15f, Quirk(turn.Seed, 2)), 8.5f);
-            var lead = float.Lerp(0.25f, 0.45f, Quirk(turn.Seed, 3)) * (turn.EndS - turn.StartS);
-
-            var rollInStart = turn.StartS - rollInLength;
-            var rollOutStart = turn.EndS - lead;
-            var rollOutEnd = rollOutStart + RollDistance(rollOut, SpeedFactor);
-
-            if (s < rollInStart) break; // this turn (and every later one) hasn't started yet
-
-            if (s < turn.StartS) // rolling in, and a little past
-                return Rotate(levelBefore, forward, (rollIn + overbank) * Ease((s - rollInStart) / rollInLength));
-
-            if (s <= turn.EndS || s < rollOutEnd)
-            {
-                // In the turn, up is measured from the centre; after it, from where the centre ended up (-From).
-                // The two meet at the end of the arc, so it's seamless. On top of that: the overbank, which the
-                // roll-out gradually swaps for the roll back to level.
-                var centre = s <= turn.EndS ? turn.Centre - position : -turn.From;
-                var rollingOut = Ease((s - rollOutStart) / (rollOutEnd - rollOutStart));
-                return Rotate(Perpendicular(centre, forward), forward, float.Lerp(overbank, rollOut, rollingOut));
-            }
-
-            level = levelAfter;
+            var (up, after) = maneuver.Kind == FlightPath.Kind.Turn
+                ? TightTurn(maneuver, level, s, position, forward)
+                : GentleCurve(maneuver, level, s, forward);
+            if (up is { } flying) return flying;     // in the middle of this one
+            if (after is not { } done) break;        // not started yet (and nor has any later one)
+            level = done;                            // already flown: the attitude it left is the new level
         }
 
-        // On a straight, between turns.
+        // On a straight, between maneuvers.
         return Perpendicular(level, forward);
+    }
+
+    /// <summary>
+    /// One tight turn, flown as described on <see cref="BankedUp"/>. Returns the camera's up if
+    /// <paramref name="s"/> is within the turn (roll-in and roll-out included), otherwise the level it leaves the
+    /// camera in if it's already over, otherwise neither.
+    /// </summary>
+    private (Vector3? Up, Vector3? After) TightTurn(FlightPath.Maneuver turn, Vector3 levelBefore, float s, Vector3 position, Vector3 forward)
+    {
+        var levelAfter = LevelAfter(turn, levelBefore);
+        // On the approach, the turn's centre lies exactly along turn.To; on the way out, exactly behind (-From).
+        var rollIn = SignedAngle(levelBefore, turn.To, turn.From);
+        var rollOut = SignedAngle(-turn.From, levelAfter, turn.To);
+
+        // This turn's pilot quirks. Overbank only happens when there's a roll-in to carry on past.
+        var overbank = rollIn == 0f ? 0f : MathF.Sign(rollIn) * float.Lerp(3f, 8f, Quirk(turn.Seed, 1)) * Degrees;
+        var rollInLength = MathF.Min(RollDistance(rollIn, SpeedFactor) * float.Lerp(0.85f, 1.15f, Quirk(turn.Seed, 2)), 8.5f);
+        var lead = float.Lerp(0.25f, 0.45f, Quirk(turn.Seed, 3)) * (turn.EndS - turn.StartS);
+
+        var rollInStart = turn.StartS - rollInLength;
+        var rollOutStart = turn.EndS - lead;
+        var rollOutEnd = rollOutStart + RollDistance(rollOut, SpeedFactor);
+
+        if (s < rollInStart) return (null, null);
+
+        if (s < turn.StartS) // rolling in, and a little past
+            return (Rotate(levelBefore, forward, (rollIn + overbank) * Ease((s - rollInStart) / rollInLength)), null);
+
+        if (s <= turn.EndS || s < rollOutEnd)
+        {
+            // In the turn, up is measured from the centre; after it, from where the centre ended up (-From).
+            // The two meet at the end of the arc, so it's seamless. On top of that: the overbank, which the
+            // roll-out gradually swaps for the roll back to level.
+            var centre = s <= turn.EndS ? turn.Centre - position : -turn.From;
+            var rollingOut = Ease((s - rollOutStart) / (rollOutEnd - rollOutStart));
+            return (Rotate(Perpendicular(centre, forward), forward, float.Lerp(overbank, rollOut, rollingOut)), null);
+        }
+
+        return (null, levelAfter);
+    }
+
+    /// <summary>
+    /// A sweep or a meander: a long, gentle curve, banked only partly, the way a plane banks in a lazy turn.
+    /// Same return convention as <see cref="TightTurn"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Rather than "up points at the centre", the camera keeps its level and banks <i>by how sharply the path is curving
+    /// sideways</i>: bank = atan(sideways curvature × <see cref="BankPerCurvature"/>), which is how a real coordinated
+    /// turn works (a tighter turn needs a steeper bank). A curve straight up or down relative to the camera has no
+    /// sideways part, so it doesn't roll at all, just pitches, like a plane cresting a hill.
+    /// </para>
+    /// <para>
+    /// <b>Curvature</b> is how fast the direction of travel changes per unit flown. Averaging it over a stretch of
+    /// path is easy: it's just (direction at the far end − direction at the near end) ÷ length. Here the stretch runs
+    /// a few units either side of the camera, which does two nice things: the bank eases in and out instead of
+    /// jumping when a curve starts, and it starts a moment <i>before</i> the curve, as a pilot anticipates it.
+    /// </para>
+    /// <para>
+    /// <b>Level</b> is carried through the curve by the smallest rotation that turns the old direction of travel into
+    /// the current one. For a curve that stays in one plane, that's exactly how the camera's up would move if it
+    /// didn't roll at all (called <i>parallel transport</i>). So a sideways sweep keeps the camera upright, and a sweep
+    /// upwards tips its up over backwards, like the pull of a tight turn.
+    /// </para>
+    /// </remarks>
+    private (Vector3? Up, Vector3? After) GentleCurve(FlightPath.Maneuver curve, Vector3 levelBefore, float s, Vector3 forward)
+    {
+        var reach = MathF.Min(4f * SpeedFactor, 8f); // how far either side the curvature is averaged
+        if (s < curve.StartS - reach) return (null, null);
+        if (s > curve.EndS + reach) return (null, Perpendicular(Carry(levelBefore, curve.From, curve.To), curve.To));
+
+        var level = Perpendicular(Carry(levelBefore, curve.From, _path!.Pose(s).Tangent), forward);
+        var curvature = (_path.Pose(s + reach).Tangent - _path.Pose(s - reach).Tangent) / (2f * reach);
+        var right = Vector3.Cross(forward, level);
+        var bank = Math.Clamp(MathF.Atan(Vector3.Dot(curvature, right) * BankPerCurvature), -MaxGentleBank, MaxGentleBank);
+        return (Rotate(level, forward, bank), null);
+    }
+
+    /// <summary>
+    /// <paramref name="v"/> turned by the smallest rotation that takes direction <paramref name="from"/> to
+    /// <paramref name="to"/>: around the axis perpendicular to both, by the angle between them.
+    /// </summary>
+    private static Vector3 Carry(Vector3 v, Vector3 from, Vector3 to)
+    {
+        var axis = Vector3.Cross(from, to);
+        var sin = axis.Length();
+        if (sin < 1e-5f) return v; // same direction (or exactly opposite, which never happens here)
+        var angle = MathF.Atan2(sin, Vector3.Dot(from, to));
+        return Vector3.Transform(v, Quaternion.CreateFromAxisAngle(axis / sin, angle));
     }
 
     /// <summary>
@@ -367,7 +445,7 @@ internal sealed class Scene
     /// Except after a left/right turn in horizontal flight, which leaves the camera on its side. That levels out to
     /// upright or inverted, whichever it was flying before.
     /// </summary>
-    private static Vector3 LevelAfter(FlightPath.Turn turn, Vector3 levelBefore)
+    private static Vector3 LevelAfter(FlightPath.Maneuver turn, Vector3 levelBefore)
     {
         var pulled = -turn.From;
         var onItsSide = MathF.Abs(turn.To.Y) < 0.5f && MathF.Abs(pulled.Y) < 0.5f;
