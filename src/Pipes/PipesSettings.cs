@@ -153,6 +153,12 @@ public sealed class PipesSettings
     public bool Shadows { get; set; } = true;
 
     /// <summary>
+    /// Modern style only: the lights slowly circle the scene (about once every two and a half minutes) and the main
+    /// light rises and dips, so shadows and highlights sweep across the pipes, in flight too.
+    /// </summary>
+    public bool MovingLight { get; set; } = false;
+
+    /// <summary>
     /// Settings files written before <see cref="Camera"/> existed had a <c>"CameraDrift": true/false</c> switch.
     /// This reads it (so "off" stays off) and is never written back out.
     /// </summary>

@@ -15,7 +15,8 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
   highlights.
 - **Modern shading:** HDR lighting, two lights plus sky ambient, GGX highlights (stretched along brushed metal),
   Fresnel reflections, ACES tonemapping, up to 8x MSAA, depth fog, vignette and dithering (no banding).
-- **Effects:** shadows from the key light (soft-edged, and dappled inside the tunnel), screen-space ambient
+- **Effects:** shadows from the key light (soft-edged, and dappled inside the tunnel; optionally the light slowly
+  circles the scene so the shadows sweep across the pipes), screen-space ambient
   occlusion (soft contact shadows), subtle bloom, and optional depth of field (before take-off only, in
   fly-through).
 - **Scene flow:** pipes have a length budget so every scene gets a variety of colours. When a scene is done it

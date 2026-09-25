@@ -94,6 +94,15 @@ internal sealed class Scene
     private float _rollGap;       // how far the roll was from its target at the end of last frame (radians)
     private float _speed;         // how fast the camera is flying right now (cells/second)
 
+    // Moving light. Its clock runs on across scenes (a scene fades out anyway, but there's no reason to snap back).
+    private float _lightTime;
+
+    /// <summary>Seconds for the moving light to circle the scene once. Slow: shadows should drift, not spin.</summary>
+    private const float LightTurnSeconds = 150f;
+
+    /// <summary>Seconds for the key light's rise and dip, and how far it goes each way (radians, about 16 degrees).</summary>
+    private const float LightRiseSeconds = 67f, LightRiseAmount = 0.28f;
+
     private enum Phase { FadeIn, Growing, Hold, Flying, FadeOut }
 
     public Scene(PipesSettings settings, Random rng)
@@ -167,7 +176,26 @@ internal sealed class Scene
 
         if (FlyThrough) UpdateFlyingCamera(dt);
         else UpdateOrbitCamera(dt);
+        UpdateLight(dt);
         _world.Collect(Pieces);
+    }
+
+    /// <summary>
+    /// With <see cref="PipesSettings.MovingLight"/> on, the lighting rig circles slowly while the key light rises and
+    /// dips between about 30 and 62 degrees above the horizon, so shadows sweep across the pipes. The two periods
+    /// don't divide into each other, so the light doesn't retrace the same loop. Off, it stays put.
+    /// </summary>
+    private void UpdateLight(float dt)
+    {
+        if (!_settings.MovingLight)
+        {
+            Camera.SetLight(0f, 0f);
+            return;
+        }
+        _lightTime += dt;
+        Camera.SetLight(
+            MathF.Tau * _lightTime / LightTurnSeconds,
+            LightRiseAmount * MathF.Sin(MathF.Tau * _lightTime / LightRiseSeconds));
     }
 
     private void UpdateOrbitCamera(float dt)

@@ -59,8 +59,35 @@ internal sealed unsafe class PipeRenderer : IDisposable
     /// </summary>
     private const int ShadowMapSize = 2048;
 
-    /// <summary>Direction towards the key light, the one that casts shadows. Warm, from above, front and right.</summary>
+    /// <summary>
+    /// Direction towards the key light, the one that casts shadows: warm, from above, front and right (about 46
+    /// degrees up). This is where it sits when the light doesn't move; see <see cref="LightRig"/>.
+    /// </summary>
     private static readonly Vector3 KeyLight = Vector3.Normalize(new Vector3(0.5f, 0.8f, 0.6f));
+
+    /// <summary>Direction towards the fill light: dim and blue, low, from the back left. Casts no shadows.</summary>
+    private static readonly Vector3 FillLight = Vector3.Normalize(new Vector3(-0.7f, 0.2f, -0.4f));
+
+    /// <summary>
+    /// The lights for this frame, from <see cref="Camera.LightTurn"/> and <see cref="Camera.LightRise"/>. The whole
+    /// rig turns together around the vertical axis, like a studio on a turntable: the key and fill lights, and the
+    /// light strips in the reflections (the shader turns its <c>sky()</c> by the same angle), so highlights stay
+    /// where the lights are. Only the key light also rises and dips. With both at 0 this is exactly the fixed rig.
+    /// </summary>
+    private static (Vector3 Key, Vector3 Fill) LightRig(Camera camera)
+    {
+        var key = KeyLight;
+        if (camera.LightRise != 0f)
+        {
+            // Keep the key light's compass direction, change its height above the horizon.
+            var flat = Vector3.Normalize(new Vector3(key.X, 0f, key.Z));
+            var elevation = MathF.Asin(key.Y) + camera.LightRise;
+            key = flat * MathF.Cos(elevation) + Vector3.UnitY * MathF.Sin(elevation);
+        }
+        if (camera.LightTurn == 0f) return (key, FillLight);
+        var turn = Matrix4x4.CreateRotationY(camera.LightTurn);
+        return (Vector3.Transform(key, turn), Vector3.Transform(FillLight, turn));
+    }
 
     private readonly GL _gl;
     private readonly RenderOptions _options;
@@ -227,14 +254,15 @@ internal sealed unsafe class PipeRenderer : IDisposable
         }
 
         var shadows = _options.Shadows && camera.ShadowRadius > 0f;
-        var lightViewProj = shadows ? LightViewProj(camera) : Matrix4x4.Identity;
+        var (keyLight, fillLight) = LightRig(camera);
+        var lightViewProj = shadows ? LightViewProj(camera, keyLight) : Matrix4x4.Identity;
         if (shadows) ShadowPass(lightViewProj);
         // Depth of field is skipped while the camera asks for no blur (in flight), and then the prepass it needs
         // (if AO doesn't) can be skipped too.
         var depthOfField = _options.DepthOfField && camera.FocusScale > 0f;
         if (_options.AmbientOcclusion || depthOfField) GeometryPass(camera);
         if (_options.AmbientOcclusion) AmbientOcclusionPass(camera);
-        ScenePass(camera, shadows, lightViewProj, camera.ShadowRadius * 2f / ShadowMapSize);
+        ScenePass(camera, keyLight, fillLight, shadows, lightViewProj, camera.ShadowRadius * 2f / ShadowMapSize);
 
         // Resolve MSAA: the GPU averages each pixel's samples as it copies.
         Blit(_sceneFbo, _resolveFbo);
@@ -281,19 +309,22 @@ internal sealed unsafe class PipeRenderer : IDisposable
     /// <para>
     /// <b>Texel snapping.</b> In flight the sphere moves every frame. If the box slid smoothly with it, each shadow's
     /// edge would land on slightly different texels every frame and visibly crawl ("shimmer"). So the box only moves
-    /// in whole texels: in the light's view, the centre is rounded to a multiple of the texel size.
+    /// in whole texels: in the light's view, the centre is rounded to a multiple of the texel size. That only holds
+    /// while the light stands still. A moving light turns the box a little every frame, so shadow edges move a little
+    /// every frame anyway; they're meant to, and the soft (PCF) edges keep that from looking like shimmer.
     /// </para>
     /// <para>
     /// The box reaches 3 radii towards the light, not just 1, so a pipe outside the sphere but between it and the
     /// light still casts its shadow into it.
     /// </para>
     /// </remarks>
-    private static Matrix4x4 LightViewProj(Camera camera)
+    private static Matrix4x4 LightViewProj(Camera camera, Vector3 keyLight)
     {
         var r = camera.ShadowRadius;
         // A fixed rotation, looking along the light from the origin. Only the orientation matters for an
         // orthographic view; where the box sits is chosen below.
-        var view = Matrix4x4.CreateLookAt(Vector3.Zero, -KeyLight, Vector3.UnitY);
+        // (World up as the view's "up" is fine: the key light never gets near straight overhead.)
+        var view = Matrix4x4.CreateLookAt(Vector3.Zero, -keyLight, Vector3.UnitY);
         var centre = Vector3.Transform(camera.ShadowCentre, view);
         var texel = 2f * r / ShadowMapSize;
         centre.X = MathF.Round(centre.X / texel) * texel;
@@ -369,7 +400,7 @@ internal sealed unsafe class PipeRenderer : IDisposable
         DrawFullscreen();
     }
 
-    private void ScenePass(Camera camera, bool shadows, Matrix4x4 lightViewProj, float shadowTexel)
+    private void ScenePass(Camera camera, Vector3 keyLight, Vector3 fillLight, bool shadows, Matrix4x4 lightViewProj, float shadowTexel)
     {
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _sceneFbo);
         _gl.Viewport(0, 0, (uint)_width, (uint)_height);
@@ -393,7 +424,9 @@ internal sealed unsafe class PipeRenderer : IDisposable
         _gl.Uniform1(Loc(_pipeProgram, "uUseAO"), _options.AmbientOcclusion ? 1 : 0);
         _gl.Uniform2(Loc(_pipeProgram, "uInvViewport"), 1f / _width, 1f / _height);
         if (_options.AmbientOcclusion) BindTexture(_pipeProgram, "uAO", 0, _aoBlurTex);
-        SetVector(_pipeProgram, "uKeyLight", KeyLight);
+        SetVector(_pipeProgram, "uKeyLight", keyLight);
+        SetVector(_pipeProgram, "uFillLight", fillLight);
+        _gl.Uniform2(Loc(_pipeProgram, "uSkyTurn"), MathF.Cos(camera.LightTurn), MathF.Sin(camera.LightTurn));
         _gl.Uniform1(Loc(_pipeProgram, "uUseShadow"), shadows ? 1 : 0);
         if (shadows)
         {

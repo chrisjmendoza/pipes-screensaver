@@ -61,12 +61,22 @@ is for: it keeps shadowed sides from going black.
   lookups spread over a few texels (*percentage-closer filtering*) turn a jagged edge into a soft one.
 - **No shimmer.** In flight the shadow region moves every frame. If it slid smoothly, each shadow's edge would land
   on different texels every frame and crawl. So the light's box only moves in whole texels: its centre is rounded
-  to the texel size in the light's view (`LightViewProj`).
+  to the texel size in the light's view (`LightViewProj`). (With the moving light, below, the box also turns a
+  little every frame, so this no longer holds exactly. The shadows are moving anyway, and the soft edges hide it.)
 - **No visible edge.** Shadows fade out over the outer 10% of the map, so where it ends never shows as a line.
 
 **In the tunnel,** a sun from above should mostly be blocked by the tunnel wall, and it is: the key light only gets
 in through gaps between pipes, which dapples the pipes like sunlight through a forest canopy. Ambient and fill light
 keep the rest colourful rather than murky.
+
+**Moving light** (the Moving light setting). The key light, the fill light and the light strips in the reflections
+form one "rig" that slowly turns around the vertical axis, once every 150 seconds, while the key light rises and
+dips between about 30 and 62 degrees above the horizon (a 67 second cycle, so the path doesn't repeat).
+`Scene.UpdateLight` sets the angles on the camera each frame, `PipeRenderer.LightRig` turns the two light
+directions, and the shader turns `sky()` by the same angle (`uSkyTurn`), so the highlights stay where the lights
+are. Nothing else changes: the shadow map is re-rendered every frame anyway, so a moving light costs nothing
+extra. It never gets close to straight overhead, which keeps the light's view (built with world up as its "up")
+well defined.
 
 **Cost,** measured at 1920×1080 with 4× MSAA: +0.2 ms per frame for a box of ~3,000 pieces (0.9 → 1.1 ms), and
 +0.45 ms in flight with ~9,700 pieces (1.5 → 2.0 ms). A 60 Hz frame has 16.7 ms. Classic (lite) mode has no
@@ -145,11 +155,14 @@ next section). Then (with Surface detail off, the older and simpler version desc
   normal changes across the pixel (Kaplanyan and Tokuyoshi's trick, as used in Google's Filament), which keeps
   small highlights stable.
 - **Environment reflection:** there's no real environment map. `sky(dir, rough)` is a function that returns a
-  gradient plus two bright "studio light" strips, and a dim warm floor below the horizon so the undersides of
-  metal pipes (which show only reflections) don't go black. Rough materials widen the strips and dim them by the
-  same factor, which fakes a blurred reflection. It uses the isotropic roughness (brushed metal's two values
-  averaged), and a roughness-aware Fresnel, `F0 + (max(1 − rough, F0) − F0)(1 − N·V)^5`, so rough surfaces
-  don't get a mirror-bright rim.
+  dark gradient plus two bright "studio light" strips, and a dim warm floor below the horizon so the undersides of
+  metal pipes (which show only reflections) don't go black. The gradient is kept close to the background on
+  purpose. It used to be a bright blue sky, 25 times brighter than the background, and Fresnel makes every surface
+  a good mirror at grazing angles, so wherever the camera looked along the pipes (or up the tunnel, in flight)
+  they mirrored that sky and turned pale and washed out. A reflection has to look like the world it's reflecting.
+  Rough materials widen the strips and dim them by the same factor, which fakes a blurred reflection. It uses the
+  isotropic roughness (brushed metal's two values averaged), and a roughness-aware Fresnel,
+  `F0 + (max(1 − rough, F0) − F0)(1 − N·V)^5`, so rough surfaces don't get a mirror-bright rim.
 - **Ambient:** a hemisphere light, brighter from above than below.
 - **Fog:** exponential-squared, so distant pipes sink gently into the background.
 
@@ -446,7 +459,8 @@ infinity, and the blur's `inf - inf` is NaN.
 | `pow(..., 2.0)` in `AoBlurFragment` | `Shaders.cs` | AO contrast |
 | `maxBlur` in `DepthOfFieldPass` | `PipeRenderer.cs` | DoF blur size at 1080p (pixels) |
 | `depthOfFocus` in `Scene.UpdateOrbitCamera` | `Scene.cs` | how quickly things blur away from focus |
-| light directions/colours | `PipeFragment` (key light: `KeyLight` in `PipeRenderer.cs`) | the overall lighting look |
+| light directions/colours | `PipeFragment` (directions: `KeyLight`, `FillLight` in `PipeRenderer.cs`) | the overall lighting look |
+| `LightTurnSeconds`, `LightRise*` | `Scene.cs` | how fast and how far the moving light travels |
 | `ShadowMapSize` | `PipeRenderer.cs` | shadow sharpness (and memory: 2048² × 3 bytes, about 12–16 MB depending on how the driver pads 24-bit depth) |
 | `flightShadowRadius` | `Scene.cs` | how far ahead shadows reach in flight (bigger = blurrier) |
 | `PolygonOffset`, normal offset | `ShadowPass`, `keyLightVisibility` | shadow acne vs shadows detaching from their pipes |
