@@ -45,4 +45,6 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - Flight speed setting
 - Roll momentum: banking swings a little past each bank and past level, then eases back
 - Pilot feel: overbanks and holds through the corner, leads the roll-out, varies each turn, faint stick wobble
+- Sweeping bends and meanders in the flight path, banked by how sharply they curve
+- Corkscrews: the flight path spirals, and the camera barrel-rolls through it with a sloping lean
 - Frame pacing that sleeps instead of letting the driver spin: CPU from up to a full core down to 7–15%
