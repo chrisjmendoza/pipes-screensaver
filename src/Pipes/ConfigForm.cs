@@ -31,6 +31,7 @@ internal sealed class ConfigForm : Form
     private readonly ComboBox _aa = Dropdown("Off", "2x", "4x", "8x");
     private readonly CheckBox _surfaces = Check("Surface detail (grime, scratches, rust; off = flat)");
     private readonly CheckBox _shadows = Check("Shadows (pipes shade the pipes behind them)");
+    private readonly CheckBox _movingLight = Check("Moving light (shadows sweep slowly)");
     private readonly CheckBox _ao = Check("Ambient occlusion (soft contact shadows)");
     private readonly CheckBox _bloom = Check("Bloom (glow on highlights)");
     private readonly CheckBox _dof = Check("Depth of field (blur near and far pipes; off in flight)");
@@ -82,6 +83,7 @@ internal sealed class ConfigForm : Form
             ("Anti-aliasing", _aa),
             ("", _surfaces),
             ("", _shadows),
+            ("", _movingLight),
             ("", _ao),
             ("", _bloom),
             ("", _dof));
@@ -178,7 +180,7 @@ internal sealed class ConfigForm : Form
     private void UpdateEffectToggles()
     {
         var modern = _style.SelectedIndex == (int)GraphicsStyle.Modern;
-        _surfaces.Enabled = _shadows.Enabled = _ao.Enabled = _bloom.Enabled = _dof.Enabled = modern;
+        _surfaces.Enabled = _shadows.Enabled = _movingLight.Enabled = _ao.Enabled = _bloom.Enabled = _dof.Enabled = modern;
     }
 
     /// <summary>
@@ -329,6 +331,7 @@ internal sealed class ConfigForm : Form
         _bloom.Checked = s.Bloom;
         _dof.Checked = s.DepthOfField;
         _shadows.Checked = s.Shadows;
+        _movingLight.Checked = s.MovingLight;
         UpdateEffectToggles();
     }
 
@@ -355,6 +358,7 @@ internal sealed class ConfigForm : Form
         _settings.Bloom = _bloom.Checked;
         _settings.DepthOfField = _dof.Checked;
         _settings.Shadows = _shadows.Checked;
+        _settings.MovingLight = _movingLight.Checked;
         _settings.Clamped();
     }
 }

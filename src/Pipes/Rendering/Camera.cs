@@ -38,6 +38,21 @@ internal sealed class Camera
         ShadowRadius = radius;
     }
 
+    /// <summary>
+    /// How far the lighting rig (key light, fill light and the reflected light strips) has turned around the vertical
+    /// axis, in radians. 0 is the fixed studio lighting. See <c>PipeRenderer.LightRig</c>.
+    /// </summary>
+    public float LightTurn { get; private set; }
+
+    /// <summary>How far the key light is raised (+) or lowered (-) from its usual height, in radians.</summary>
+    public float LightRise { get; private set; }
+
+    public void SetLight(float turn, float rise)
+    {
+        LightTurn = turn;
+        LightRise = rise;
+    }
+
     /// <param name="up">Which way is up on screen. Must not point along the view direction.</param>
     /// <param name="far">Nothing farther than this is drawn.</param>
     /// <param name="fogReference">Distance the fog is scaled to: bigger means thinner fog.</param>

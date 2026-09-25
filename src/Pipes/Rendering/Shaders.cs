@@ -214,6 +214,8 @@ internal static class Shaders
         uniform int uUseAO;
         uniform vec2 uInvViewport;  // 1 / framebuffer size, to turn gl_FragCoord into a texture coordinate
         uniform vec3 uKeyLight;     // direction towards the main light
+        uniform vec3 uFillLight;    // direction towards the dim fill light
+        uniform vec2 uSkyTurn;      // cos, sin of how far the lighting rig has turned around the vertical axis
 
         uniform sampler2DShadow uShadowMap; // depth as seen from the key light (see PipeRenderer.ShadowPass)
         uniform mat4 uLightViewProj;        // world -> shadow map
@@ -503,12 +505,20 @@ internal static class Shaders
         // factor, which keeps their total energy about the same (like a real blurry reflection). Below the horizon,
         // a dim warm "floor" bounce, so the undersides of metal pipes (which show only reflections) don't go black
         // (with surfaces off, the original's darker floor).
+        // The gradient is kept dark, close to the background, and only the strips are bright. It used to be a bright
+        // blue sky (zenith 0.8, against a background of 0.03), and every pipe mirrored it at grazing angles, where
+        // Fresnel makes even paint a good mirror. Looking along a pipe, or up the tunnel in flight, that covered whole
+        // pipes in a pale sheen that washed their colours out. A reflection should look like the world around it.
+        // The whole rig turns with the moving light (uSkyTurn, see PipeRenderer.LightRig), so the strips' highlights
+        // slide along the pipes as the key light circles.
         vec3 sky(vec3 dir, float rough)
         {
-            vec3 horizon = vec3(0.10, 0.12, 0.18);
-            vec3 zenith  = vec3(0.45, 0.55, 0.80);
+            // Into the rig's own frame: undo its turn around the vertical axis.
+            dir = vec3(dir.x * uSkyTurn.x - dir.z * uSkyTurn.y, dir.y, dir.x * uSkyTurn.y + dir.z * uSkyTurn.x);
+            vec3 horizon = vec3(0.025, 0.03, 0.045);
+            vec3 zenith  = vec3(0.11, 0.14, 0.2);
         #if SURFACES
-            vec3 ground  = vec3(0.05, 0.04, 0.035);
+            vec3 ground  = vec3(0.035, 0.028, 0.024);
         #else
             vec3 ground  = vec3(0.015, 0.015, 0.02); // the original's near-black floor
         #endif
@@ -571,7 +581,7 @@ internal static class Shaders
             // The key light (warm, from above) casts the shadows; the dim blue fill doesn't, which is what a fill
             // light is for: it keeps the shadowed side from going black. Shadows use the geometric normal: the bumps
             // are far smaller than a shadow-map texel.
-            vec3 lightDirs[2] = vec3[](uKeyLight, normalize(vec3(-0.7, 0.2, -0.4)));
+            vec3 lightDirs[2] = vec3[](uKeyLight, uFillLight);
             vec3 lightCols[2] = vec3[](vec3(2.6, 2.45, 2.25) * keyLightVisibility(Ngeo), vec3(0.45, 0.55, 0.8));
 
             vec3 direct = vec3(0.0);
@@ -627,7 +637,7 @@ internal static class Shaders
             float shininess = exp2(mix(8.5, 3.0, rough));
             float specScale = 2.5 * sqrt(clamp(shininess / 120.0, 0.25, 2.0));
 
-            vec3 lightDirs[2] = vec3[](uKeyLight, normalize(vec3(-0.7, 0.2, -0.4)));
+            vec3 lightDirs[2] = vec3[](uKeyLight, uFillLight);
             vec3 lightCols[2] = vec3[](vec3(2.6, 2.45, 2.25) * keyLightVisibility(N), vec3(0.45, 0.55, 0.8));
 
             vec3 direct = vec3(0.0);
