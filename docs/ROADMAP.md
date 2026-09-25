@@ -23,8 +23,7 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 
 ## Ideas
 
-- **Textured/"flex" pipes:** ribbed flexible conduit (a ripple in the cylinder shader's radius along its length),
-  or subtle surface textures.
+- **"Flex" pipes:** ribbed flexible conduit (a ripple in the cylinder shader's radius along its length).
 - **Shadows:** real shadows from the key light (a shadow map) would add a lot of depth. SSAO currently does part of
   that job.
 - **Performance mode:** half-resolution SSAO and DoF for integrated GPUs and very large multi-monitor setups.
@@ -34,6 +33,8 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - Curved elbows, ball joints, or mixed
 - Variable pipe thickness
 - Per-pipe materials (glossy/satin plastic, polished/brushed metal)
+- Procedural surfaces: grime, worn and chipped paint, rust, copper patina, galvanised spangle, cast iron; GGX
+  highlights, anisotropic for brushed metal
 - Fittings: valves, couplings, flanges; tee junctions with branch pipes
 - The teapot easter egg
 - SSAO, bloom, depth of field

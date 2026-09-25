@@ -22,7 +22,7 @@ internal sealed class ConfigForm : Form
     private readonly CheckBox _separateMonitors = Check("Own scene on each monitor");
 
     private readonly ComboBox _joints = Dropdown("Classic (ball joints)", "Smooth elbows", "Mixed");
-    private readonly ComboBox _finish = Dropdown("Glossy plastic", "Metallic", "Mixed (per pipe)");
+    private readonly ComboBox _finish = Dropdown("Glossy plastic", "Metallic", "Weathered (rust, patina, worn paint)", "Mixed (per pipe)");
     private readonly CheckBox _thickness = Check("Vary pipe thickness");
     private readonly CheckBox _fittings = Check("Valves, couplings, flanges and junctions");
     private readonly CheckBox _teapots = Check("Rare teapots (like the original)");

@@ -8,10 +8,12 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
 - **Real elbows:** bends can be proper curved pipe (a quarter torus), classic ball joints, or a mix.
 - **Fittings:** occasional valves (with handwheels), couplings, bolted flanges, and tee junctions that split off a
   branch pipe. And, like the original, the very rare teapot.
-- **Variety:** pipes come in several thicknesses, and the Mixed finish gives each pipe its own material (glossy or
-  satin plastic, polished or brushed metal).
-- **Modern shading:** HDR lighting, two lights plus sky ambient, Fresnel reflections, ACES tonemapping,
-  up to 8x MSAA, depth fog, vignette and dithering (no banding).
+- **Variety:** pipes come in several thicknesses and surfaces: glossy or satin paint, polished or brushed metal,
+  and a Weathered finish with chipped paint, rust, copper gone green, galvanised steel and cast iron. The Mixed
+  finish gives each pipe its own. The surfaces are procedural (computed per pixel from noise, no textures), so the
+  wear on each pipe is different.
+- **Modern shading:** HDR lighting, two lights plus sky ambient, GGX highlights (stretched along brushed metal),
+  Fresnel reflections, ACES tonemapping, up to 8x MSAA, depth fog, vignette and dithering (no banding).
 - **Effects:** screen-space ambient occlusion (soft contact shadows), subtle bloom, and optional depth of field.
 - **Scene flow:** pipes have a length budget so every scene gets a variety of colours. When a scene is done it
   holds for a moment, fades out, and restarts from a new angle. The camera can stay still, orbit, or float.

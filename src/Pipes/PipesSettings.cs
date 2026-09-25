@@ -13,13 +13,20 @@ public enum JointStyle
     Mixed,
 }
 
+/// <summary>
+/// How the pipes' surfaces look (modern style only). Each pipe gets a <see cref="Simulation.Surface"/> from this
+/// in <c>PipeWorld.NextMaterial</c>. The settings dialog's dropdown lists these in the same order, and the JSON
+/// file stores the names, so inserting one in the middle doesn't break older files.
+/// </summary>
 public enum Finish
 {
     /// <summary>Glossy plastic, closest to the 90s look.</summary>
     Plastic,
     /// <summary>Polished metal with coloured reflections.</summary>
     Metallic,
-    /// <summary>Each pipe gets its own finish: glossy or satin plastic, polished or brushed metal.</summary>
+    /// <summary>Old pipes: worn and chipped paint, rust, copper with verdigris, galvanised steel, cast iron.</summary>
+    Weathered,
+    /// <summary>Each pipe gets its own finish, from glossy paint through polished metal to rust.</summary>
     Mixed,
 }
 

@@ -463,7 +463,10 @@ A tee reserves a side cell as well as the cell ahead. When the tee step complete
 
 - `MeshKind`: `Cylinder`, `Sphere`, `Elbow`, `Ring`, `Teapot`. One GPU mesh each.
 - `PipeInstance`: one placed piece. Position, two direction vectors, colour, radius, sweep angle, metallic,
-  roughness. Exactly 16 floats, which is also the GPU buffer layout.
+  roughness, and then the procedural surface: which `Surface` (glossy paint, rust, patina...), a per-pipe seed and
+  a wear amount. 19 floats plus one spare make 20, which is also the GPU buffer layout (`FloatsPerInstance`).
+- `Surface` / `PipeMaterial`: what a pipe is made of. `PipeWorld.NextMaterial` picks one per pipe from the
+  `Finish` setting; the shader turns it into a pattern (see RENDERING.md, "Surfaces: procedural texture").
 - `PieceLists`: a list per kind, plus helpers such as `Cylinder(from, to, radius, material)`,
   `Elbow(...)` and `Ring(...)` that fill in a `PipeInstance` correctly.
 
