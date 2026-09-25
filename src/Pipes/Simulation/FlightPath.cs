@@ -78,30 +78,30 @@ public sealed class FlightPath
     private const float TurnRadius = 8f;
 
     /// <summary>
-    /// How busy the layout is, from the "Flight style" setting: how long the straights between maneuvers are, and
+    /// How busy the course is, from the "Course complexity" setting: how long the straights between maneuvers are, and
     /// how often each kind of maneuver comes up (<see cref="Turn"/>, <see cref="Sweep"/> and <see cref="Meander"/> are
     /// chances out of 1; corkscrews get whatever's left).
     /// </summary>
-    public readonly record struct Style(float MinStraight, float MaxStraight, float Turn, float Sweep, float Meander)
+    public readonly record struct Complexity(float MinStraight, float MaxStraight, float Turn, float Sweep, float Meander)
     {
         /// <summary>Long cruises and lazy curves, the odd turn, hardly any corkscrews.</summary>
-        private static readonly Style Zen = new(45f, 90f, 0.15f, 0.40f, 0.40f);
+        private static readonly Complexity Zen = new(45f, 90f, 0.15f, 0.40f, 0.40f);
 
         /// <summary>The original mix: mostly tight turns, gentler curves mixed in, the occasional corkscrew.</summary>
-        private static readonly Style Balanced = new(18f, 40f, 0.50f, 0.22f, 0.18f);
+        private static readonly Complexity Balanced = new(18f, 40f, 0.50f, 0.22f, 0.18f);
 
         /// <summary>Straight from one maneuver into the next, and a corkscrew one time in four.</summary>
-        private static readonly Style Wild = new(3f, 10f, 0.50f, 0.10f, 0.15f);
+        private static readonly Complexity Wild = new(3f, 10f, 0.50f, 0.10f, 0.15f);
 
         /// <summary>
         /// The style for a slider position from 1 to 10. Level 5 is <see cref="Balanced"/>; below it blends towards
         /// <see cref="Zen"/> (at 1), above it towards <see cref="Wild"/> (at 10).
         /// </summary>
-        public static Style ForLevel(int level) => level <= 5
+        public static Complexity ForLevel(int level) => level <= 5
             ? Blend(Zen, Balanced, (level - 1) / 4f)
             : Blend(Balanced, Wild, (level - 5) / 5f);
 
-        private static Style Blend(Style a, Style b, float t) => new(
+        private static Complexity Blend(Complexity a, Complexity b, float t) => new(
             float.Lerp(a.MinStraight, b.MinStraight, t), float.Lerp(a.MaxStraight, b.MaxStraight, t),
             float.Lerp(a.Turn, b.Turn, t), float.Lerp(a.Sweep, b.Sweep, t), float.Lerp(a.Meander, b.Meander, t));
     }
@@ -113,7 +113,7 @@ public sealed class FlightPath
     private const int BucketSize = 8;
 
     private readonly Random _rng;
-    private readonly Style _style;
+    private readonly Complexity _complexity;
     private readonly List<Vector3> _points = [];
     private readonly List<Vector3> _tangents = [];
     private readonly List<int> _flow = [];
@@ -124,10 +124,10 @@ public sealed class FlightPath
     private int _currentFlow;
 
     /// <param name="firstRun">Length of the first straight, before the first turn.</param>
-    public FlightPath(Vector3 start, Int3 direction, float firstRun, Style style, Random rng)
+    public FlightPath(Vector3 start, Int3 direction, float firstRun, Complexity complexity, Random rng)
     {
         _rng = rng;
-        _style = style;
+        _complexity = complexity;
         _direction = direction;
         _usedDirections.Add(direction);
         _currentFlow = NextFlow();
@@ -158,7 +158,7 @@ public sealed class FlightPath
         while (Length < s)
         {
             AddManeuver();
-            AddStraight(float.Lerp(_style.MinStraight, _style.MaxStraight, _rng.NextSingle()));
+            AddStraight(float.Lerp(_complexity.MinStraight, _complexity.MaxStraight, _rng.NextSingle()));
         }
     }
 
@@ -199,9 +199,9 @@ public sealed class FlightPath
     private void AddManeuver()
     {
         var roll = _rng.NextSingle();
-        if (roll < _style.Turn) AddQuarter(Kind.Turn, TurnRadius);
-        else if (roll < _style.Turn + _style.Sweep) AddQuarter(Kind.Sweep, float.Lerp(22f, 30f, _rng.NextSingle()));
-        else if (roll < _style.Turn + _style.Sweep + _style.Meander) AddMeander();
+        if (roll < _complexity.Turn) AddQuarter(Kind.Turn, TurnRadius);
+        else if (roll < _complexity.Turn + _complexity.Sweep) AddQuarter(Kind.Sweep, float.Lerp(22f, 30f, _rng.NextSingle()));
+        else if (roll < _complexity.Turn + _complexity.Sweep + _complexity.Meander) AddMeander();
         else AddCorkscrew();
     }
 
@@ -262,15 +262,17 @@ public sealed class FlightPath
     }
 
     /// <summary>
-    /// A corkscrew: 1 or 2 full turns of spiral (radius 3.5–5, a turn every 32–40 units), plus half a turn at each end
-    /// while it opens up and closes down. Coils that close together would merge their tunnels, but one turn apart
-    /// they're a whole pitch (32+ units) apart, and half a turn apart about 20, both well clear.
+    /// A corkscrew: 1, 2 or 3 turns of spiral (radius 3.5–5, a turn every 32–40 units), the first half turn opening
+    /// up and the last half turn closing down. Each turn is one barrel roll, and three in a row is a lot, so shorter
+    /// ones come up more often: one roll 45% of the time, two 35%, three 20%. Coils that close together would merge
+    /// their tunnels, but one turn apart they're a whole pitch (32+ units) apart, and half a turn apart about 20,
+    /// both well clear.
     /// </summary>
     private void AddCorkscrew()
     {
         var axis = _direction.ToVector();
         var pitch = float.Lerp(32f, 40f, _rng.NextSingle());
-        var turns = 1 + _rng.Next(2);
+        var turns = _rng.NextSingle() switch { < 0.45f => 1, < 0.8f => 2, _ => 3 };
         var helix = new Helix(
             Start: _points[^1],
             Axis: axis,
@@ -278,7 +280,7 @@ public sealed class FlightPath
             Spin: _rng.Next(2) == 0 ? -1f : 1f,
             Radius: float.Lerp(3.5f, 5f, _rng.NextSingle()),
             Pitch: pitch,
-            Length: (turns + 1) * pitch,
+            Length: turns * pitch,
             RampLength: pitch * 0.5f);
         var startS = Length;
 

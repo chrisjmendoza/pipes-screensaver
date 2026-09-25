@@ -17,7 +17,11 @@ namespace Pipes.Simulation;
 ///  └─────────────────────┘
 /// </code>
 /// </remarks>
-public sealed class TunnelSpace(FlightPath path, BoxSpace box) : IPipeSpace
+/// <param name="tunnelStartS">
+/// Where the path leaves the box. The tunnel wall only exists beyond it, so no tunnel pipe ever grows between the
+/// camera and the box it's looking at.
+/// </param>
+public sealed class TunnelSpace(FlightPath path, BoxSpace box, float tunnelStartS) : IPipeSpace
 {
     /// <summary>Cells closer than this to the path stay empty, so the camera never flies through a pipe.</summary>
     public const float InnerRadius = 2.4f;
@@ -27,6 +31,27 @@ public sealed class TunnelSpace(FlightPath path, BoxSpace box) : IPipeSpace
 
     /// <summary>How deep the band of new pipes is, along the path.</summary>
     private const float SpawnBandDepth = 28f;
+
+    /// <summary>
+    /// While the box builds, the first stretch of tunnel beyond it builds too, as part of the same scene, so at
+    /// take-off the tunnel is already there to fly into instead of starting from nothing.
+    /// </summary>
+    private const float PreBuildLength = 20f;
+
+    /// <summary>
+    /// The share of the scene's pipes that start in that first stretch of tunnel rather than in the box. (The scene
+    /// gets correspondingly more pipes, so the box stays as full as usual.)
+    /// </summary>
+    public const float PreBuildShare = 0.3f;
+
+    /// <summary>
+    /// Where along the path the spawn band starts. Normally <see cref="SpawnAhead"/> in front of the camera, but at
+    /// take-off it starts where the tunnel does and sweeps forward (see <see cref="AdvanceSpawnBand"/>).
+    /// </summary>
+    private float _bandStart = tunnelStartS;
+
+    /// <summary>Where the path leaves the box and the tunnel begins (see the constructor).</summary>
+    public float TunnelStartS { get; } = tunnelStartS;
 
     // The path never changes where it's already been built, so each cell's nearest-path answer can be remembered.
     private readonly Dictionary<Int3, (float Distance, float S, Vector3 Tangent, int Flow)> _nearest = [];
@@ -49,23 +74,49 @@ public sealed class TunnelSpace(FlightPath path, BoxSpace box) : IPipeSpace
     /// <summary>The far edge of where pipes spawn. The camera's fog and far plane are set to suit it.</summary>
     public float SpawnAheadMax => SpawnAhead + SpawnBandDepth;
 
+    /// <summary>How fast the spawn band may sweep forward to catch up after take-off (units per second).</summary>
+    public float CatchUpSpeed { get; init; } = 20f;
+
     public bool IsBounded => !Flying;
 
     public bool Contains(Int3 cell)
     {
         var near = Nearest(cell);
-        if (near.Distance < InnerRadius) return false;           // the flight corridor
-        if (box.Contains(cell)) return true;                      // the original scene
-        return Flying && near.Distance <= OuterRadius             // the tunnel wall...
-            && near.S >= CameraS - 4f;                            // ...but not behind the camera
+        if (near.Distance < InnerRadius) return false;             // the flight corridor
+        if (box.Contains(cell)) return true;                        // the original scene
+        if (near.Distance > OuterRadius || near.S < TunnelStartS) return false; // not the tunnel wall
+        return Flying
+            ? near.S >= CameraS - 4f                                // in flight: anywhere not behind the camera
+            : near.S <= TunnelStartS + PreBuildLength;              // before: just its first stretch
     }
 
     public Int3 SpawnCandidate(Random rng)
     {
-        if (!Flying) return box.SpawnCandidate(rng);
+        if (!Flying)
+        {
+            return rng.NextSingle() < PreBuildShare
+                ? RingCandidate(TunnelStartS + rng.NextSingle() * PreBuildLength, rng)
+                : box.SpawnCandidate(rng);
+        }
+        return RingCandidate(_bandStart + rng.NextSingle() * SpawnBandDepth, rng);
+    }
 
-        // A random point in the ring around the path, somewhere ahead of the camera.
-        var s = CameraS + SpawnAhead + rng.NextSingle() * SpawnBandDepth;
+    /// <summary>
+    /// Move the spawn band along with the camera, once per frame in flight.
+    /// </summary>
+    /// <remarks>
+    /// The band belongs <see cref="SpawnAhead"/> in front of the camera, so pipes have time to grow before it arrives.
+    /// But at take-off the camera is still in front of the box, and at high speed "SpawnAhead in front" is far past
+    /// the end of the box: jumping straight there would leave a stretch of tunnel that never gets any pipes (a gap
+    /// you could see). So the band starts where the tunnel does and sweeps forward at <see cref="CatchUpSpeed"/>
+    /// (faster than the camera) until it's where it belongs. Every stretch of the tunnel gets its share of pipes.
+    /// </remarks>
+    public void AdvanceSpawnBand(float dt) =>
+        _bandStart = Math.Max(TunnelStartS, Math.Min(CameraS + SpawnAhead, _bandStart + CatchUpSpeed * dt));
+
+    /// <summary>A random cell in the ring of tunnel wall around the path at distance <paramref name="s"/>.</summary>
+    private Int3 RingCandidate(float s, Random rng)
+    {
         var (centre, tangent) = path.Pose(s);
         var (u, v) = PieceLists.Perpendiculars(tangent);
         var angle = rng.NextSingle() * MathF.Tau;

@@ -163,10 +163,10 @@ just an index. The maneuvers:
 | Turn | quarter circle, radius 8, into a new direction |
 | Sweep | quarter circle, radius 22–30: a long, lazy curve into a new direction |
 | Meander | shallow arcs (radius 18–26) swinging 20–30° side to side, 2–4 times, then straightening up the same way |
-| Corkscrew | a spiral round the direction of travel: radius 3.5–5, one coil every 32–40 units, 1–2 coils |
+| Corkscrew | a spiral round the direction of travel: radius 3.5–5, one coil every 32–40 units, 1–3 coils (one barrel roll each: one 45% of the time, two 35%, three 20%) |
 
-How long the straights are, and how often each maneuver comes up, is the **flight style** setting
-(`FlightPath.Style`), a slider from 1 (zen) to 10 (wild). Three anchor styles, with the slider blending between
+How long the straights are, and how often each maneuver comes up, is the **course complexity** setting
+(`FlightPath.Complexity`), a slider from 1 (zen) to 10 (wild). Three anchor levels, with the slider blending between
 them in straight lines (1→5, then 5→10):
 
 | | Straights | Turn | Sweep | Meander | Corkscrew |
@@ -205,10 +205,19 @@ Two properties matter:
 - A **corridor** within 2.4 units of the path is always kept empty, so the camera never flies through a pipe. It's
   cut through the box from the start, so while the scene builds you can see a gap through the middle where the
   camera is about to go.
-- Before take-off, pipes grow only in the box, and the box can fill up as usual.
-- After take-off, new pipes spawn in the **wall**, a shell 2.4–6.5 units from the path, in a band 28 units deep
-  that starts 14 units ahead of the camera (further at high flight speeds, see below). You see them start and grow
-  as you approach. Fog hides the far end.
+- The **tunnel starts where the path leaves the far side of the box**. No tunnel pipe ever grows before that, so
+  nothing gets between the camera and the box it's looking at.
+- **Before take-off,** pipes grow in the box and in the tunnel's first 20 units beyond it: 30% of the scene's pipes
+  start there, and the scene gets 1 ÷ 0.7 as many pipes, so the box is as full as usual. The box and the mouth of
+  the tunnel build together as one scene. The box can fill up as usual.
+- **After take-off,** new pipes spawn in the **wall**, a shell 2.4–6.5 units from the path, in a band 28 units deep
+  that normally starts 14 units ahead of the camera (further at high flight speeds, see below). You see them start
+  and grow as you approach. Fog hides the far end.
+- **The band never skips ahead** (`TunnelSpace.AdvanceSpawnBand`). At take-off it starts where the tunnel does, and
+  sweeps forward at twice the peak flight speed until it's back where it belongs. It used to jump straight to "14+
+  units ahead of the camera", and at high speed that was 72 units ahead while the box ended 37 in: the stretch in
+  between never got any pipes, a hole you could see. Measured at 20 cells/s, counting wall pieces 6–14 units ahead
+  of the camera every 5 units flown: before, seven zeros in a row after the box; after, never below about 220.
 - **Flow:** each stretch of path randomly flows with or against the flight. Near the path, `Flow()` returns that
   direction, snapped to a grid axis, and `PipeWorld` biases pipes to follow it. Pipes running with the flow turn a
   third as often, and pipes running across it turn into it. That's what lines the tunnel with long runs of pipe.
@@ -218,6 +227,8 @@ Two properties matter:
 - It starts at the beginning of the path, looking head-on at the box. The path runs straight through the box's
   middle, so take-off is continuous: the camera just starts moving. The speed eases in over 3 seconds (a smoothstep
   curve), so there's no jolt.
+- **It takes off as soon as the scene's last pipe has started**, with no pause for the finished scene: the last few
+  pipes finish growing as the camera gets going, so building and flying run into each other.
 - It looks at a point 5 units further along the path, so it turns into bends slightly early, the way a driver
   looks into a corner.
 - **Banking like a plane** (`Scene.BankedUp`). A plane doesn't skid sideways into a turn: it rolls until the turn
@@ -295,7 +306,7 @@ Two properties matter:
   - Measured: once the spiral is open, the attitude holds steady relative to the axis (lean plus 5–8° of spring
     lag, since the spring always trails a steady roll slightly), and it comes out within 2° of level.
 
-  **Room to roll.** With a wild flight style, straights can be as short as 3 units, and neighbouring maneuvers'
+  **Room to roll.** On a wild course, straights can be as short as 3 units, and neighbouring maneuvers'
   rolls would overlap and fight over the camera. So each maneuver may only reach half the straight on either side
   (`Scene.Room`): a tight turn's roll-in and roll-out squeeze into it (getting quicker), and so does a gentle
   curve's averaging stretch. Then the next maneuver always starts from exactly the attitude the last one left.
