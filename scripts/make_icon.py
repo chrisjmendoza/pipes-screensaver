@@ -2,19 +2,20 @@
 """
 Generates src/Pipes/Pipes.ico procedurally (no external art assets).
 
-Renders two versions of the same idea -- a few glossy 3D pipes with a right-angle bend and
-"ball joint" elbows, in the classic Pipes screensaver palette, on a dark navy rounded-square
-background:
+Renders two versions of the same idea -- glossy 3D pipes with ball joints at the bends, in the
+classic Pipes screensaver palette, seen from above at a diagonal like the app's camera, on a dark
+navy rounded-square background:
 
   - a "detailed" scene (three pipes) used for the larger icon sizes (48-256px), and
-  - a "simple" scene (two thick pipes, one crossing) used for the small sizes (16-32px),
-    where the detailed scene's thinner pipes would turn to mush.
+  - a "simple" scene (two fat pipes) used for the small sizes (16-32px), where the detailed
+    scene's thinner pipes would turn to mush.
 
-Each scene is rendered once at a high working resolution (see MASTER_SIZE) with numpy-based
-per-pixel shading (a cylinder lighting model for the pipe tubes, a sphere lighting model for the
-ball joints/end caps), then downscaled per output size with Lanczos resampling for smooth
-antialiasing. The results are packed into a single multi-resolution .ico by hand (Pillow's ICO
-writer only ever resizes one source image, and we want the small sizes to come from the
+The pipes are real 3D cylinders and spheres, ray traced with numpy: a ray per pixel, the nearest
+shape it hits, then the app's lighting at that point (key light with a shadow ray, fill light,
+highlight, ambient, tonemap). Each scene is rendered once at a high working resolution (see
+MASTER_SIZE), then downscaled per output size with Lanczos resampling, which is what smooths the
+edges (supersampling). The results are packed into a single multi-resolution .ico by hand (Pillow's
+ICO writer only ever resizes one source image, and we want the small sizes to come from the
 simplified scene instead of a shrunk copy of the detailed one).
 
 Re-run this after changing anything below:
@@ -52,116 +53,209 @@ BG_TOP = (10, 18, 38)      # dark navy gradient for the rounded-square backgroun
 BG_BOTTOM = (19, 31, 56)
 CORNER_RADIUS_FRAC = 0.185  # squircle-ish corner rounding, as a fraction of the canvas size
 
-# A single light direction (normalized) shared by every pipe and joint, so the whole icon reads
-# as one consistently-lit scene rather than a pile of separately-lit parts.
-_light = np.array([-0.55, -0.55, 0.63])
-LIGHT = _light / np.linalg.norm(_light)
+# ---- 3D scene --------------------------------------------------------------------------------------
+# The pipes are real 3D shapes (cylinders for the runs, spheres for the ball joints and end caps) on a
+# grid, like the app's, and each pixel is ray traced: a ray from the camera through the pixel, the
+# nearest shape it hits, then lighting at that point. It's the same idea as the app's renderer, done
+# the slow, simple way on the CPU with numpy: one shape at a time, over all pixels at once.
 
-AMBIENT = 0.30      # base illumination so shadowed sides aren't pure black
-DIFFUSE = 0.75       # how much the lambertian term contributes
-SPEC_POWER = 26.0    # tight highlight = glossy plastic; lower would look more matte
-SPEC_STRENGTH = 0.9
-EDGE_AA_PX = 1.6      # antialiasing feather width, in master-canvas pixels
+# The app's lights (PipeRenderer.KeyLight / FillLight): a warm key light from above, front and right,
+# which casts the shadows, and a dim blue fill from the back left. Colours are linear-light intensities.
+KEY_DIR = np.array([0.5, 0.8, 0.6]) / np.linalg.norm([0.5, 0.8, 0.6])
+FILL_DIR = np.array([-0.7, 0.2, -0.4]) / np.linalg.norm([-0.7, 0.2, -0.4])
+KEY_COLOR = np.array([2.6, 2.45, 2.25])
+FILL_COLOR = np.array([0.45, 0.55, 0.8])
 
+# Where the camera sits relative to the scene: up, to the right and in front, looking down across the
+# pipes at a diagonal, the way the app's camera usually sees them. Distance is in grid cells; the
+# picture is then zoomed to fit the canvas (see _camera), so this only sets how strong the perspective is.
+VIEW_DIR = np.array([0.95, 0.75, 1.25]) / np.linalg.norm([0.95, 0.75, 1.25])
+VIEW_DISTANCE = 11.0
 
-def _shade(nx: np.ndarray, ny: np.ndarray, nz: np.ndarray, color: tuple[int, int, int]) -> np.ndarray:
-    """Blinn-Phong-ish shading for a surface normal field (nx, ny, nz), each in [-1, 1]."""
-    ndotl = np.clip(nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2], 0.0, 1.0)
-    diffuse = AMBIENT + DIFFUSE * ndotl
-    specular = SPEC_STRENGTH * np.power(ndotl, SPEC_POWER)
-    base = np.array(color, dtype=np.float64)
-    rgb = base[None, None, :] * diffuse[..., None] + 255.0 * specular[..., None]
-    return np.clip(rgb, 0, 255)
-
-
-def _capsule(X: np.ndarray, Y: np.ndarray, p0, p1, radius: float, color):
-    """Shaded color + antialiased coverage mask for a pipe segment (a thick rounded line)."""
-    x0, y0 = p0
-    x1, y1 = p1
-    dx, dy = x1 - x0, y1 - y0
-    seg_len2 = dx * dx + dy * dy
-    if seg_len2 < 1e-9:
-        t = np.zeros_like(X)
-        dirx, diry = 1.0, 0.0
-    else:
-        t = np.clip(((X - x0) * dx + (Y - y0) * dy) / seg_len2, 0.0, 1.0)
-        seg_len = seg_len2 ** 0.5
-        dirx, diry = dx / seg_len, dy / seg_len
-    projx, projy = x0 + t * dx, y0 + t * dy
-    offx, offy = X - projx, Y - projy
-    dist = np.sqrt(offx * offx + offy * offy)
-
-    # Perpendicular axis to the pipe's direction, used to place the point on the tube's round
-    # cross-section (s = sin of the angle around the cylinder, in [-1, 1]).
-    perpx, perpy = -diry, dirx
-    s = np.clip((offx * perpx + offy * perpy) / radius, -1.0, 1.0)
-    nz = np.sqrt(np.clip(1.0 - s * s, 0.0, 1.0))
-    nx, ny = perpx * s, perpy * s
-
-    alpha = np.clip((radius - dist) / EDGE_AA_PX + 0.5, 0.0, 1.0)
-    rgb = _shade(nx, ny, nz, color)
-    return rgb, alpha
+BALL_SCALE = 1.5   # ball joints are this much fatter than the pipe, as in the app (PipeWorld.BallScale)
+MARGIN = 0.1       # empty border around the pipes, as a fraction of the canvas
 
 
-def _sphere(X: np.ndarray, Y: np.ndarray, center, radius: float, color):
-    """Shaded color + antialiased coverage mask for a ball joint / rounded end cap."""
-    cx, cy = center
-    dx, dy = X - cx, Y - cy
-    dist = np.sqrt(dx * dx + dy * dy)
-    r = np.clip(dist / radius, 0.0, 1.0)
-    nz = np.sqrt(np.clip(1.0 - r * r, 0.0, 1.0))
-    nx, ny = dx / radius, dy / radius
-
-    alpha = np.clip((radius - dist) / EDGE_AA_PX + 0.5, 0.0, 1.0)
-    rgb = _shade(nx, ny, nz, color)
-    return rgb, alpha
-
-
-def _composite(base: np.ndarray, rgb: np.ndarray, alpha: np.ndarray) -> None:
-    """Alpha-blend (rgb, alpha) over base (H, W, 4) float image, in place. `alpha` is a 0..1
-    fraction; base's own alpha channel is stored 0..255 like its color channels, so it needs
-    scaling up when folded into the "over" formula."""
-    a = alpha[..., None]
-    base[..., :3] = base[..., :3] * (1 - a[..., 0])[..., None] + rgb * a
-    base[..., 3] = alpha * 255.0 + base[..., 3] * (1 - alpha)
+def _to_linear(c):
+    """sRGB 0..255 to linear light, like PipeWorld.ToLinear: lighting maths only works in linear."""
+    return (np.array(c, dtype=np.float64) / 255.0) ** 2.2
 
 
 class Pipe:
-    """A polyline of axis-aligned points: straight capsule segments joined by ball joints, with
-    rounded caps at the two open ends."""
+    """A run of pipe through grid points (x, y, z): straight cylinders between them, a ball joint at
+    every bend and a round cap at both open ends."""
 
-    def __init__(self, points: list[tuple[float, float]], radius: float, color: tuple[int, int, int]):
-        self.points = points
+    def __init__(self, points, radius: float, color):
+        self.points = [np.array(p, dtype=np.float64) for p in points]
         self.radius = radius
-        self.color = color
+        self.albedo = _to_linear(color)
 
-    def draw(self, canvas: np.ndarray, X: np.ndarray, Y: np.ndarray) -> None:
-        for p0, p1 in zip(self.points, self.points[1:]):
-            rgb, alpha = _capsule(X, Y, p0, p1, self.radius, self.color)
-            _composite(canvas, rgb, alpha)
-        # Ball joints at interior bend points, a little larger than the pipe -- the classic
-        # "3D Pipes" look -- drawn after the segments so they cleanly cover the seam at the bend.
+    def shapes(self):
+        """(kind, a, b, radius, albedo) tuples: "cyl" from a to b, or "sph" centred on a (b unused)."""
+        out = []
+        for a, b in zip(self.points, self.points[1:]):
+            out.append(("cyl", a, b, self.radius, self.albedo))
         for bend in self.points[1:-1]:
-            rgb, alpha = _sphere(X, Y, bend, self.radius * 1.15, self.color)
-            _composite(canvas, rgb, alpha)
-        # Rounded caps at the two open ends (same radius as the pipe, so it reads as a capped tube).
+            out.append(("sph", bend, None, self.radius * BALL_SCALE, self.albedo))
         for end in (self.points[0], self.points[-1]):
-            rgb, alpha = _sphere(X, Y, end, self.radius, self.color)
-            _composite(canvas, rgb, alpha)
+            out.append(("sph", end, None, self.radius, self.albedo))
+        return out
 
-    def coverage(self, X: np.ndarray, Y: np.ndarray) -> np.ndarray:
-        """Unshaded silhouette (max alpha across every part), used for the drop-shadow pass."""
-        cov = np.zeros(X.shape, dtype=np.float64)
-        for p0, p1 in zip(self.points, self.points[1:]):
-            _, alpha = _capsule(X, Y, p0, p1, self.radius, self.color)
-            cov = np.maximum(cov, alpha)
-        for bend in self.points[1:-1]:
-            _, alpha = _sphere(X, Y, bend, self.radius * 1.15, self.color)
-            cov = np.maximum(cov, alpha)
-        for end in (self.points[0], self.points[-1]):
-            _, alpha = _sphere(X, Y, end, self.radius, self.color)
-            cov = np.maximum(cov, alpha)
-        return cov
+
+def _dot(a, b):
+    return np.einsum("...i,...i", a, b)
+
+
+def _hit_sphere(o, d, c, r):
+    """Distance along each ray (o + t*d) to the sphere's near side, or inf for a miss. Solves
+    |o + t*d - c|^2 = r^2, a quadratic in t (d is unit length, so its first coefficient is 1)."""
+    oc = o - c
+    b = _dot(oc, d)
+    disc = b * b - (_dot(oc, oc) - r * r)
+    t = -b - np.sqrt(np.maximum(disc, 0.0))
+    return np.where((disc >= 0.0) & (t > 1e-4), t, np.inf)
+
+
+def _hit_cylinder(o, d, a, b, r):
+    """Distance to the side of a finite cylinder from a to b (its ends are covered by spheres). The
+    same quadratic as a sphere, but with the part along the axis removed, so it's the distance from
+    the axis that must equal r; then the hit only counts if it lands between the two ends."""
+    length = np.linalg.norm(b - a)
+    axis = (b - a) / length
+    oc = o - a
+    d_perp = d - (d @ axis)[..., None] * axis
+    oc_perp = oc - (oc @ axis)[..., None] * axis
+    qa = _dot(d_perp, d_perp)
+    qb = _dot(oc_perp, d_perp)
+    qc = _dot(oc_perp, oc_perp) - r * r
+    disc = qb * qb - qa * qc
+    t = (-qb - np.sqrt(np.maximum(disc, 0.0))) / np.maximum(qa, 1e-12)
+    along = (oc + t[..., None] * d) @ axis
+    ok = (disc >= 0.0) & (t > 1e-4) & (along >= 0.0) & (along <= length)
+    return np.where(ok, t, np.inf)
+
+
+def _normal(shape, p):
+    kind, a, b, _, _ = shape
+    if kind == "sph":
+        n = p - a
+    else:
+        axis = (b - a) / np.linalg.norm(b - a)
+        rel = p - a
+        n = rel - (rel @ axis)[..., None] * axis  # straight out from the axis
+    return n / np.linalg.norm(n, axis=-1, keepdims=True)
+
+
+def _trace(shapes, o, d):
+    """Nearest hit over all shapes: (distance, index of the shape) per ray, inf / -1 for a miss."""
+    best = np.full(d.shape[:-1], np.inf)
+    idx = np.full(d.shape[:-1], -1)
+    for i, (kind, a, b, r, _) in enumerate(shapes):
+        t = _hit_sphere(o, d, a, r) if kind == "sph" else _hit_cylinder(o, d, a, b, r)
+        closer = t < best
+        best = np.where(closer, t, best)
+        idx = np.where(closer, i, idx)
+    return best, idx
+
+
+def _camera(pipes):
+    """Camera position and axes, and the image-plane window that just fits the pipes plus a MARGIN."""
+    pts = np.array([p for pipe in pipes for p in pipe.points])
+    centre = (pts.min(axis=0) + pts.max(axis=0)) / 2.0
+    eye = centre + VIEW_DIR * VIEW_DISTANCE
+    forward = (centre - eye) / np.linalg.norm(centre - eye)
+    right = np.cross(forward, [0.0, 1.0, 0.0])
+    right /= np.linalg.norm(right)
+    up = np.cross(right, forward)
+
+    # Project each grid point onto the image plane one unit in front of the eye (u, v = sideways and
+    # upward offset / depth), grown by its ball joint's radius, and frame the square around them all.
+    us, vs = [], []
+    for pipe in pipes:
+        for p in pipe.points:
+            rel = p - eye
+            depth = rel @ forward
+            grow = pipe.radius * BALL_SCALE / depth
+            u, v = rel @ right / depth, rel @ up / depth
+            us += [u - grow, u + grow]
+            vs += [v - grow, v + grow]
+    cu, cv = (min(us) + max(us)) / 2.0, (min(vs) + max(vs)) / 2.0
+    half = max(max(us) - min(us), max(vs) - min(vs)) / 2.0 / (1.0 - 2.0 * MARGIN)
+    return eye, forward, right, up, cu, cv, half
+
+
+def _shade(shapes, idx, p, n, d):
+    """Lighting at the hit points, after the app's modern shader with surface detail off: Lambert
+    diffuse and a Blinn-Phong highlight from both lights (the key light shadowed), a hemisphere
+    ambient, and a faint reflection of the dark sky at grazing angles (Fresnel)."""
+    albedo = np.zeros(p.shape)
+    for i, shape in enumerate(shapes):
+        albedo[idx == i] = shape[4]
+
+    # Shadow ray towards the key light: if it hits anything, this point is in shadow. It starts a hair
+    # off the surface so it can't hit the very shape it leaves (the ray tracer's "shadow acne").
+    t_shadow, _ = _trace(shapes, p + n * 1e-3, np.broadcast_to(KEY_DIR, p.shape))
+    lit = np.isinf(t_shadow).astype(np.float64)
+
+    v = -d
+    color = np.zeros(p.shape)
+    for light, light_color, visible in ((KEY_DIR, KEY_COLOR, lit), (FILL_DIR, FILL_COLOR, 1.0)):
+        ndotl = np.clip(n @ light, 0.0, 1.0)
+        h = (light + v) / np.linalg.norm(light + v, axis=-1, keepdims=True)
+        spec = np.clip(_dot(n, h), 0.0, 1.0) ** 90.0 * 0.8  # tight: glossy plastic
+        color += (visible * ndotl)[..., None] * light_color * (albedo + spec[..., None])
+    color += albedo * (0.6 + 0.4 * n[..., 1:2]) * np.array([0.16, 0.18, 0.24])  # brighter from above
+    ndotv = np.clip(_dot(n, v), 0.0, 1.0)
+    color += (0.04 + 0.96 * (1.0 - ndotv) ** 5)[..., None] * np.array([0.08, 0.1, 0.14])
+    return color
+
+
+def _render(pipes, size: int) -> np.ndarray:
+    """RGBA (0..255 floats) of the pipes alone, transparent where no pipe is."""
+    shapes = [s for pipe in pipes for s in pipe.shapes()]
+    eye, forward, right, up, cu, cv, half = _camera(pipes)
+    px = (np.arange(size) + 0.5) / size * 2.0 - 1.0
+    U, V = np.meshgrid(cu + px * half, cv - px * half)  # image rows go down, v goes up
+    d = forward + U[..., None] * right + V[..., None] * up
+    d /= np.linalg.norm(d, axis=-1, keepdims=True)
+    o = np.broadcast_to(eye, d.shape)
+
+    t, idx = _trace(shapes, o, d)
+    hit = np.isfinite(t)
+    p = o + np.where(hit, t, 0.0)[..., None] * d
+    n = np.zeros(d.shape)
+    n[..., 1] = 1.0  # anything, for the rays that hit nothing
+    for i, shape in enumerate(shapes):
+        mask = idx == i
+        if mask.any():
+            n[mask] = _normal(shape, p[mask])
+
+    color = _shade(shapes, idx, p, n, d)
+    # HDR to display, as in the app's post pass: a filmic tonemap (Narkowicz's ACES fit), then gamma.
+    mapped = np.clip((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0)
+    rgba = np.zeros((size, size, 4))
+    rgba[..., :3] = mapped ** (1 / 2.2) * 255.0
+    rgba[..., 3] = hit * 255.0
+    return rgba
+
+
+def _add_contact_shadow(canvas: np.ndarray, layer: np.ndarray, size: int) -> None:
+    """A soft dark halo behind the pipes (their silhouette, blurred and nudged down), so they stand
+    off the background instead of looking pasted onto it."""
+    silhouette = Image.fromarray(layer[..., 3].astype(np.uint8), mode="L")
+    silhouette = silhouette.transform(silhouette.size, Image.AFFINE, (1, 0, 0, 0, 1, -size * 0.02))
+    blurred = silhouette.filter(ImageFilter.GaussianBlur(radius=size * 0.02))
+    shadow = np.asarray(blurred, dtype=np.float64) / 255.0 * 0.55 * (canvas[..., 3] / 255.0)
+    canvas[..., :3] *= (1 - shadow[..., None])
+
+
+def _scene(pipes, size: int) -> Image.Image:
+    canvas = _rounded_square_background(size)
+    layer = _render(pipes, size)
+    _add_contact_shadow(canvas, layer, size)
+    a = layer[..., 3:4] / 255.0 * (canvas[..., 3:4] / 255.0)
+    canvas[..., :3] = canvas[..., :3] * (1 - a) + layer[..., :3] * a
+    return Image.fromarray(np.clip(canvas, 0, 255).astype(np.uint8), mode="RGBA")
 
 
 def _rounded_square_background(size: int) -> np.ndarray:
@@ -183,60 +277,22 @@ def _rounded_square_background(size: int) -> np.ndarray:
     return canvas
 
 
-def _add_contact_shadow(canvas: np.ndarray, pipes: list[Pipe], X: np.ndarray, Y: np.ndarray, size: int) -> None:
-    """Soft dark blob under the pipes (offset + blurred silhouette), so they look like they sit
-    slightly above the background instead of being pasted flat onto it."""
-    offset = size * 0.018
-    shadow = np.zeros((size, size), dtype=np.float64)
-    for pipe in pipes:
-        Xo, Yo = X - offset, Y - offset * 1.3
-        shadow = np.maximum(shadow, pipe.coverage(Xo, Yo))
-    shadow_img = Image.fromarray((shadow * 255).astype(np.uint8), mode="L")
-    shadow_img = shadow_img.filter(ImageFilter.GaussianBlur(radius=size * 0.012))
-    shadow_alpha = (np.asarray(shadow_img, dtype=np.float64) / 255.0) * 0.5
-    # Only darken where the background itself is opaque (inside the rounded square).
-    shadow_alpha *= canvas[..., 3] / 255.0
-    canvas[..., :3] *= (1 - shadow_alpha[..., None])
-
-
-def _scene(pipes: list[Pipe], size: int) -> Image.Image:
-    canvas = _rounded_square_background(size)
-    xs = np.arange(size, dtype=np.float64) + 0.5
-    X, Y = np.meshgrid(xs, xs)
-    _add_contact_shadow(canvas, pipes, X, Y, size)
-    for pipe in pipes:
-        pipe.draw(canvas, X, Y)
-    return Image.fromarray(np.clip(canvas, 0, 255).astype(np.uint8), mode="RGBA")
-
-
 def _detailed_scene(size: int) -> Image.Image:
-    """Three pipes: red and blue cross once (blue drawn on top, so it reads as passing in front),
-    plus a short yellow accent pipe for a third color pop. Coordinates are in a 1024-unit space,
-    scaled to `size`."""
-    s = size / 1024.0
-
-    def pts(*xy: tuple[float, float]) -> list[tuple[float, float]]:
-        return [(x * s, y * s) for x, y in xy]
-
+    """Three pipes around the corner of a small block of grid cells, as the app's camera sees its box: red
+    up and over the top, blue passing underneath it (in its shadow), and a short yellow run in front."""
     pipes = [
-        Pipe(pts((185, 780), (185, 430), (575, 430), (575, 245)), radius=70 * s, color=RED),
-        Pipe(pts((820, 780), (440, 780), (440, 345)), radius=70 * s, color=BLUE),
-        Pipe(pts((695, 185), (695, 305), (810, 305)), radius=52 * s, color=YELLOW),
+        Pipe([(0, 0, 2), (0, 2, 2), (2, 2, 2), (2, 2, 0)], radius=0.3, color=RED),
+        Pipe([(3, 1, 1), (1, 1, 1), (1, -1, 1)], radius=0.3, color=BLUE),
+        Pipe([(1, 0, 3), (2, 0, 3), (2, 1, 3)], radius=0.3, color=YELLOW),
     ]
     return _scene(pipes, size)
 
 
 def _simple_scene(size: int) -> Image.Image:
-    """Two thick pipes with one bend each and a single crossing -- bold enough to survive being
-    shrunk to 16px. Same 1024-unit coordinate space as the detailed scene."""
-    s = size / 1024.0
-
-    def pts(*xy: tuple[float, float]) -> list[tuple[float, float]]:
-        return [(x * s, y * s) for x, y in xy]
-
+    """Two fat pipes: a red elbow and a short cyan run. Bold enough to survive being shrunk to 16px."""
     pipes = [
-        Pipe(pts((195, 800), (195, 400), (610, 400)), radius=140 * s, color=RED),
-        Pipe(pts((830, 800), (500, 800), (500, 235)), radius=140 * s, color=CYAN),
+        Pipe([(0, 0, 1), (0, 2, 1), (2, 2, 1)], radius=0.5, color=RED),
+        Pipe([(2, 0, 0), (2, 1, 0)], radius=0.5, color=CYAN),
     ]
     return _scene(pipes, size)
 
