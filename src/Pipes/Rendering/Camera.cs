@@ -23,6 +23,21 @@ internal sealed class Camera
     /// <summary>How quickly things blur away from <see cref="FocusDistance"/> (depth-of-field strength).</summary>
     public float FocusScale { get; private set; }
 
+    /// <summary>
+    /// The part of the world that gets shadows: a sphere the renderer fits its shadow map around. The smaller it is,
+    /// the sharper the shadows, since the map's texels are spread over less space. A radius of 0 means no shadows.
+    /// </summary>
+    public Vector3 ShadowCentre { get; private set; }
+
+    /// <inheritdoc cref="ShadowCentre"/>
+    public float ShadowRadius { get; private set; }
+
+    public void SetShadowFocus(Vector3 centre, float radius)
+    {
+        ShadowCentre = centre;
+        ShadowRadius = radius;
+    }
+
     /// <param name="up">Which way is up on screen. Must not point along the view direction.</param>
     /// <param name="far">Nothing farther than this is drawn.</param>
     /// <param name="fogReference">Distance the fog is scaled to: bigger means thinner fog.</param>

@@ -76,6 +76,7 @@ internal sealed class Scene
     private BoxSpace _box = null!;
     private float _aspect = 16f / 9f;
     private float _yaw, _pitch, _yawSpeed, _distance, _depth;
+    private float _boxRadius; // half the box's diagonal, plus a margin: a sphere that holds the whole scene
     private float _time;
     private Vector4 _phases; // random offsets so every scene's float motion is different
     private Phase _phase;
@@ -196,6 +197,7 @@ internal sealed class Scene
         // Depth of field: fully blurred at the grid's front and back faces, sharp through the middle.
         Camera.LookAt(eye, target, Vector3.UnitY, _aspect, VerticalFov, far: distance * 4f,
             fogReference: _distance, depthOfFocus: _depth * 0.5f + 1f);
+        Camera.SetShadowFocus(_box.Center, _boxRadius);
     }
 
     /// <summary>
@@ -248,6 +250,13 @@ internal sealed class Scene
             far: float.Lerp(_distance * 4f, tunnel.SpawnAheadMax + 28f, ease),
             fogReference: float.Lerp(_distance, 26f * SpeedFactor, ease),
             depthOfFocus: float.Lerp(_depth * 0.5f + 1f, 6f, ease));
+
+        // Shadows cover the whole box before take-off, then a region reaching ahead of the camera: from a little
+        // behind it to about 38 units ahead, where the fog is thickening anyway.
+        const float flightShadowRadius = 24f;
+        Camera.SetShadowFocus(
+            Vector3.Lerp(_box.Center, eye + forward * (flightShadowRadius * 0.6f), ease),
+            float.Lerp(_boxRadius, flightShadowRadius, ease));
 
         tunnel.CameraS = _flightS;
         if (Airborne)
@@ -698,6 +707,7 @@ internal sealed class Scene
         var depth = Math.Clamp((int)MathF.Round(shortSide * 1.1f), 8, 20);
         _box = new BoxSpace(new Int3(width, height, depth));
         _depth = depth;
+        _boxRadius = 0.5f * new Vector3(width, height, depth).Length() + 1f;
 
         // Fit both the grid's height and width into view (from its front face), viewed mostly head-on.
         var halfTan = MathF.Tan(VerticalFov * 0.5f);

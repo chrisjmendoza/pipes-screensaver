@@ -37,6 +37,7 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - Fittings: valves, couplings, flanges; tee junctions with branch pipes
 - The teapot easter egg
 - SSAO, bloom, depth of field
+- Shadows from the key light (shadow map with soft edges), including dappled light in the fly-through tunnel
 - Camera modes: still, orbit, float
 - Classic (lite) style: the original's look at about a tenth of the GPU cost
 - A scene per monitor (with portrait-aware grids), and no rendering in the gaps between monitors
