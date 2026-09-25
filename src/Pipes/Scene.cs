@@ -192,7 +192,8 @@ internal sealed class Scene
         }
 
         var eye = target + new Vector3(MathF.Sin(_yaw) * MathF.Cos(pitch), MathF.Sin(pitch), MathF.Cos(_yaw) * MathF.Cos(pitch)) * distance;
-        // Depth of field: fully blurred at the grid's front and back faces, sharp through the middle.
+        // Depth of field: sharp through the middle, fully blurred just in front of the grid's front face (the back
+        // face blurs less, as with a real lens: blur grows with the difference in 1/distance).
         Camera.LookAt(eye, target, Vector3.UnitY, _aspect, VerticalFov, far: distance * 4f,
             fogReference: _distance, depthOfFocus: _depth * 0.5f + 1f);
         Camera.SetShadowFocus(_box.Center, _boxRadius);

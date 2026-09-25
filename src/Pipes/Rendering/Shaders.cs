@@ -3,9 +3,10 @@ namespace Pipes.Rendering;
 /// <summary>
 /// All GLSL source, as C# raw string literals. See docs/RENDERING.md for how the passes fit together:
 /// <code>
-///  geometry prepass ─► SSAO ─► AO blur ─┐
+///  shadow map (from the key light) ─────┐
+///  geometry prepass ─► SSAO ─► AO blur ─┤
 ///                                        ▼
-///  background + pipes (HDR, MSAA) ─► resolve ─► depth of field ─► bloom ─► post (tonemap) ─► screen
+///  background + pipes (HDR, MSAA) ─► resolve ─► depth of field (optional) ─► bloom (optional) ─► post (tonemap) ─► screen
 /// </code>
 /// </summary>
 internal static class Shaders
@@ -862,9 +863,9 @@ internal static class Shaders
         """;
 
     /// <summary>
-    /// Final pass: blend in bloom, map HDR to displayable 0..1 with the ACES filmic curve, gamma-encode, darken
-    /// the corners (vignette), fade to black between scenes, and add a tiny noise dither so dark gradients don't
-    /// show bands.
+    /// Final pass: blend in bloom, map HDR to displayable 0..1 with the ACES filmic curve, darken the corners
+    /// (vignette), gamma-encode, add a tiny noise dither so dark gradients don't show bands, then fade to black
+    /// between scenes.
     /// </summary>
     public const string PostFragment = """
         #version 330 core

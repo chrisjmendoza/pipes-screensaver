@@ -175,26 +175,34 @@ internal sealed unsafe class GLHost : IDisposable
 
         var (fbo, tex) = CreateReadbackTarget(width, height);
 
-        // Warm up (shader compilation, driver caches), then time. Finish() waits for the GPU, so the clock covers
-        // the GPU's work, not just the CPU queueing commands.
-        for (var i = 0; i < 30; i++) RenderViews(views, fbo, width, height);
-        _gl.Finish();
+        // Warm up, then time. The warm-up covers shader compilation and driver caches, but mostly it gives the GPU
+        // time to raise its clock: an idle card runs slow, and a short benchmark can finish before it speeds up,
+        // which made the same settings measure anywhere from 2.5 to 13 ms a frame. A second and a half of steady
+        // work settles it. Finish() waits for the GPU, so the clock covers the GPU's work, not just the CPU queueing
+        // commands.
         var clock = Stopwatch.StartNew();
+        for (var i = 0; i < 30 || clock.Elapsed.TotalSeconds < 1.5; i++)
+        {
+            RenderViews(views, fbo, width, height);
+            _gl.Finish();
+        }
+        clock.Restart();
+        var pieces = 0; // the busiest frame's count: scenes fade out and restart, so the last frame's can be tiny
         for (var i = 0; i < frames; i++)
         {
             foreach (var view in views) view.Update(1f / 60f);
             RenderViews(views, fbo, width, height);
+            pieces = Math.Max(pieces, views.Sum(v => Enumerable.Range(0, Simulation.PieceLists.KindCount).Sum(k => v.Scene.Pieces[(Simulation.MeshKind)k].Count)));
         }
         _gl.Finish();
         var ms = clock.Elapsed.TotalMilliseconds / frames;
 
         _gl.DeleteFramebuffer(fbo);
         _gl.DeleteTexture(tex);
-        var pieces = views.Sum(v => v.Scene.Pieces[Simulation.MeshKind.Cylinder].Count + v.Scene.Pieces[Simulation.MeshKind.Sphere].Count);
         foreach (var view in views) view.Dispose();
         File.WriteAllText(reportPath,
             $"{settings.Style} {width}x{height} in {views.Count} view(s), AA={settings.Antialiasing}: " +
-            $"{ms:F2} ms/frame ({1000 / ms:F0} fps max), {pieces} pieces" + Environment.NewLine);
+            $"{ms:F2} ms/frame ({1000 / ms:F0} fps max), {pieces} pieces at most" + Environment.NewLine);
     }
 
     /// <summary>

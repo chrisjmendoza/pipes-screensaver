@@ -21,6 +21,18 @@ Nothing is committed to yet. Candidates, roughly smallest first:
   power state once it notices how little work it's doing, which is known to briefly stall mixed-refresh
   multi-monitor setups. It happens at most once per run.
 
+- **`/bench` crashes in the NVIDIA driver with 8× MSAA + depth of field on long runs.** 1,500 frames at 1920×1080
+  with `Antialiasing 8, DepthOfField true` dies after roughly 20 seconds with exit code 0xC0000409 (a fail-fast
+  inside `nvoglv64.dll`, driver 32.0.16.1047), while 400 frames pass. Ruled out (each tested): shadows, AO, the
+  scene restart (a 200-pipe scene that never restarts crashes too), and everything added on 2026-09-25 (builds
+  from before the surfaces and before the day's renderer edits crash the same way). 8× without DoF and 4× with
+  DoF both survive 1,500 frames. **Normal use is unaffected:** the same settings ran windowed at 60 Hz for
+  45 seconds (2,700 frames) without trouble, so it needs the benchmark's uncapped, flat-out rendering. Untested
+  theory: each frame orphans about 6.5 MB of instance buffers (`UploadInstances`), and with the GPU that far
+  behind the CPU the driver's pool of orphaned buffers may hit a limit. Earlier the same runs sometimes survived
+  at 20 ms a frame instead of crashing, which fits a driver thrashing rather than a plain bug in our GL calls.
+  A `glFinish` (or a fence) every few frames in `Benchmark` would test the theory.
+
 ## Ideas
 
 - **Ray-traced reflections:** the hardware ray tracing on RTX-class cards can't be reached from OpenGL (it needs

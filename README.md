@@ -14,16 +14,19 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
   wear on each pipe is different.
 - **Modern shading:** HDR lighting, two lights plus sky ambient, GGX highlights (stretched along brushed metal),
   Fresnel reflections, ACES tonemapping, up to 8x MSAA, depth fog, vignette and dithering (no banding).
-- **Effects:** screen-space ambient occlusion (soft contact shadows), subtle bloom, and optional depth of field.
+- **Effects:** shadows from the key light (soft-edged, and dappled inside the tunnel), screen-space ambient
+  occlusion (soft contact shadows), subtle bloom, and optional depth of field (before take-off only, in
+  fly-through).
 - **Scene flow:** pipes have a length budget so every scene gets a variety of colours. When a scene is done it
   holds for a moment, fades out, and restarts from a new angle. The camera can stay still, orbit, or float.
-- **Fly through the pipes:** a camera mode where, once the scene is built, the camera dives into it and flies on
+- **Fly through the pipes:** a camera mode where, as the scene finishes building, the camera takes off into it and flies on
   through an endless tunnel of pipes growing ahead of it. The tunnel mixes tight turns, long sweeping bends,
   snaking meanders and corkscrews, and its pipes flow with or against the flight. The camera banks like a plane
   flown by a good (not perfect) pilot, with momentum: it rolls into left and right turns, pulls straight up into
   climbs, rolls onto its back to pull into dives, and barrel-rolls through corkscrews. With no horizon, it flies
   like a spaceship: whichever way up a maneuver leaves it becomes the new level. Flight speed is adjustable (and
-  the pilot can vary it), and a course complexity slider goes from zen cruising to wild, maneuver after maneuver.
+  the pilot can vary it), a course complexity slider goes from zen cruising to wild, maneuver after maneuver, and a
+  tunnel density slider sets how full the walls are (the setting to turn down on a slower GPU).
 - **Classic (lite) mode:** for nostalgia, or a slower PC. It renders like the 1990s original: low-poly pipes lit
   per vertex on a black background, no effects. It uses roughly a tenth of the GPU time of the modern style.
 - **Multi-monitor aware:** each monitor gets its own scene, framed for its shape (portrait monitors too), and
@@ -50,8 +53,8 @@ Pipes.exe /shot out.png [seconds=20] [width=1920] [height=1080] [seed=1] [monito
 
 Add `monitors` to render your whole desktop exactly as fullscreen would lay it out, one scene per monitor.
 
-To measure how expensive a settings combination is, `/bench` renders a few hundred frames offscreen (no VSync)
-and writes the average time per frame to a text file:
+To measure how expensive a settings combination is, `/bench` warms the GPU up for a second and a half, then
+renders a few hundred frames offscreen (no VSync) and writes the average time per frame to a text file:
 
 ```powershell
 Pipes.exe /bench bench.txt [frames=300] [width=1920] [height=1080] [monitors]
@@ -104,9 +107,9 @@ src/Pipes/
     Pieces.cs             the drawable pieces the simulation hands to the renderer
   Rendering/
     PipeRenderer.cs       instanced drawing and the chain of effect passes
-    Shaders.cs            all GLSL: pipe shading, SSAO, bloom, depth of field, tonemapping
+    Shaders.cs            all GLSL: pipe shading and surfaces, shadows, SSAO, bloom, depth of field, tonemapping
     MeshBuilder.cs        cylinder, sphere, torus and teapot meshes
-    Camera.cs             view/projection, fog and focus
+    Camera.cs             view/projection, fog, focus and the shadow region
   Native/Win32.cs         P/Invoke declarations
   Native/VBlankWaiter.cs  sleeps until the monitor's refresh, so the driver never spins a CPU core waiting
 scripts/publish.ps1       single-file publish -> Pipes.scr (optionally install)
@@ -120,9 +123,9 @@ There's no windowing library because preview mode must parent into a foreign HWN
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the program is put together, from `Main` to a frame on screen,
   and how the pipe simulation works.
-- [docs/RENDERING.md](docs/RENDERING.md): the graphics techniques, pass by pass (instancing, shading, HDR, SSAO,
+- [docs/RENDERING.md](docs/RENDERING.md): the graphics techniques, pass by pass (instancing, shading, surfaces, shadows, HDR, SSAO,
   bloom, depth of field, tonemapping).
-- [docs/ROADMAP.md](docs/ROADMAP.md): ideas and plans, including the fly-through tunnel mode.
+- [docs/ROADMAP.md](docs/ROADMAP.md): ideas, known issues, and what's done.
 
 ## License
 

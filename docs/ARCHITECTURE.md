@@ -135,8 +135,8 @@ A few details:
 
 ```
 FadeIn ──► Growing ──► Hold ──► FadeOut ──► (new world) FadeIn ...
-                         │
-                         └─ fly-through ──► Flying (150 s) ──► FadeOut ──► ...
+              │
+              └─ fly-through (last pipe started) ──► Flying (150 s) ──► FadeOut ──► ...
 ```
 
 Each new world is a fresh `PipeWorld` with a grid shaped to the view: 12 cells across its shorter side and as many
@@ -175,8 +175,7 @@ them in straight lines (1→5, then 5→10):
 | 5, Balanced (default) | 18–40 | 50% | 22% | 18% | 10% |
 | 10, Wild | 3–10 | 50% | 10% | 15% | 25% |
 
-Level 5 picks its random numbers exactly as the code did before the setting existed, so the default flight didn't
-change.
+Level 5 is the mix the flight used before the setting existed.
 
 A meander's swings are `+θ, −2θ, +2θ, …, ±θ`: they add up to no turn, so it comes out heading exactly the way it
 went in.
@@ -277,13 +276,15 @@ Two properties matter:
   radius-30 one 36°. A curve straight up or down (relative to the camera) has no sideways part, so it just pitches,
   like cresting a hill.
   - **Curvature** is how fast the direction of travel changes per unit flown. Averaged over a stretch it's simply
-    `(direction at far end − direction at near end) ÷ length`. Taking the stretch 4 units either side of the camera
+    `(direction at far end − direction at near end) ÷ length`. Taking the stretch about 3.5 units either side of the
+    camera (more at high flight speeds, up to 7, and never past the room either side)
     smooths the bank in and out, and starts it a moment *before* the curve, as a pilot would.
   - **Level through a curve** is carried along by the smallest rotation from the old direction of travel to the
     current one. For a curve in one plane that's exactly what *parallel transport* gives: how up moves if you don't
     roll at all. So a sideways sweep keeps the camera upright, and a sweep upwards tips its up over backwards.
 
-  Measured: sideways sweeps hold 36–44° through the curve; meanders weave between about +50° and −50°, like flying
+  Sideways sweeps hold about 32–50° through the curve (each curve's pilot banks 85–120% as steeply as the formula
+  says); meanders weave between about +50° and −50°, like flying
   down a snake; vertical sweeps don't roll.
 
   **Gentle curves get a looser spring.** With the normal roll spring (below), a meander's bank changes so gradually
@@ -380,7 +381,7 @@ Two properties matter:
   The result is kept between 60% and 145% of the setting, and the actual speed follows it through a *first-order
   lag*, `speed += (wanted − speed) × (1 − e^(−dt / 1.5 s))`: each moment it closes a fixed share of the gap, which
   feels like accelerating rather than jumping. Measured: at a setting of 5 it ranges 3.6–6.9 and averages 4.9–5.2
-  (4.6–5.1 in the wild style, where there are more turns to be careful about). The *banking* still uses the speed
+  (4.6–5.1 on a wild course, where there are more turns to be careful about). The *banking* still uses the speed
   setting, not the current speed, so a roll's shape along the path never changes mid-roll; only the spring's
   timing uses the current speed.
 
@@ -495,11 +496,15 @@ Say you want a pressure gauge: a small disc on a stem.
   choice.
 - `PIPES_SETTINGS` (environment variable) overrides the file location. Useful for test renders.
 
-`ConfigForm` is the dialog, built in code rather than the WinForms designer. Choosing the Classic style also sets
-the pipe options to the original's (ball joints, plastic, one thickness, no fittings, still camera) as a starting
-point. That handler is attached *after* the saved settings are loaded into the controls, so opening the dialog
-doesn't trigger it. Its dropdown item order matches the enum order, so `(JointStyle)_joints.SelectedIndex` converts
-directly.
+`ConfigForm` is the dialog, built in code rather than the WinForms designer: two columns of labelled groups
+(Animation and Flight on the left, Pipes and Graphics on the right), with the Flight group greyed out unless the
+camera flies through. Choosing the Classic style also sets the pipe options to the original's (ball joints,
+plastic, one thickness, no fittings, still camera) as a starting point. That handler is attached *after* the saved
+settings are loaded into the controls, so opening the dialog doesn't trigger it. Its dropdown item order matches
+the enum order, so `(JointStyle)_joints.SelectedIndex` converts directly. **Reset to defaults** loads a
+`new PipesSettings()` into the controls; like any other change, nothing is saved until OK (or "Try it"). Cancel
+closes the form explicitly: a button's `DialogResult` only closes a form shown with `ShowDialog()`, and this one is
+the application's main window (`Application.Run`).
 
 ## Development workflow
 
@@ -513,7 +518,9 @@ directly.
   own view) instead of one width × height view. That's how the per-monitor mode was tested without taking over the
   screens.
 - `Pipes.exe /bench bench.txt 300 1920 1080` renders 300 frames offscreen with no VSync and writes the average
-  time per frame. `_gl.Finish()` before stopping the clock makes it include the GPU's work, not just the time the
-  CPU took to queue commands. Combine it with `PIPES_SETTINGS` to compare settings.
+  time per frame. It renders untimed for 1.5 seconds first: an idle GPU runs at a low clock, and a benchmark this
+  short can finish before it speeds up (the same settings once measured anywhere from 2.5 to 13 ms a frame).
+  `_gl.Finish()` before stopping the clock makes it include the GPU's work, not just the time the CPU took to
+  queue commands. Combine it with `PIPES_SETTINGS` to compare settings.
 - For intermittent glitches, make them countable. Flag the bad pixels in a shader (e.g. `isnan()` → magenta),
   render a few thousand frames offscreen, and count. See "Bug story: the black boxes" in RENDERING.md.

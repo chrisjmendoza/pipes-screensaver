@@ -25,7 +25,7 @@ single pass, described in its own section below.
                                                               ▼
                                                    bloom: down ×6, up ×5 (optional)
                                                               ▼
-                                   post: bloom mix, tonemap, gamma, vignette, fade, dither ──► screen
+                                   post: bloom mix, tonemap, vignette, gamma, dither, fade ──► screen
 ```
 
 The prepass only runs if SSAO or depth of field is on, and each optional pass only runs (and only allocates its
@@ -318,11 +318,12 @@ Real lenses scatter a little light from bright spots into their surroundings. Bl
 1. Mix in bloom.
 2. **ACES filmic tonemap:** squeezes 0..∞ into 0..1 along an S-curve like film stock: gentle roll-off in
    highlights, slightly punchy mid-tones.
-3. **Gamma:** linear → sRGB for the monitor.
-4. **Vignette:** darken the corners a little.
-5. **Fade:** multiply by the scene fade (0 to 1) for transitions.
-6. **Dither:** add ±½ of an 8-bit step of noise. Dark gradients like the background would otherwise show visible
+3. **Vignette:** darken the corners a little.
+4. **Gamma:** linear → sRGB for the monitor.
+5. **Dither:** add ±½ of an 8-bit step of noise. Dark gradients like the background would otherwise show visible
    bands, because 8 bits per channel isn't enough in the dark range.
+6. **Fade:** multiply by the scene fade (0 to 1) for transitions. Last, so a faded frame is a dimmed copy of the
+   finished picture.
 
 ## Classic (lite) style
 
@@ -351,15 +352,21 @@ maths). Rather than copying it, `Shaders.Placement` holds the inputs and a `plac
 `PipeVertex` and `ClassicVertex` are built by string concatenation: `#version` line + `Placement` + their own
 `main()`. GLSL has no `#include`, so gluing strings together is the usual approach.
 
-**Cost** (`/bench`, RTX 3080; the numbers vary run to run as the GPU changes clock speed, but the gap is
-consistent):
+**Cost** (`/bench` on an RTX 3080, with the settings otherwise at their defaults: shadows on, floating camera, the
+default pipe counts; the numbers vary by about ±30% run to run as the GPU changes clock speed, but the gaps between
+rows are the point):
 
 | Style | 1920×1080 | 5680×1920 (three monitors) |
 |---|---|---|
-| Classic, no AA | ~0.25 ms/frame | ~0.5 ms/frame |
-| Classic, 4x AA | ~0.7–1.3 ms/frame | ~0.7 ms/frame |
-| Modern, 4x AA, AO + bloom | ~3.5 ms/frame | ~8 ms/frame |
-| Modern, 8x AA, AO + bloom + DoF | ~4 ms/frame | ~7–8 ms/frame |
+| Classic, no AA | ~0.2 ms/frame | ~0.8 ms/frame |
+| Classic, 4x AA | ~0.35 ms/frame | ~1.3 ms/frame |
+| Modern, 4x AA, AO + bloom + shadows | ~1.5 ms/frame | ~6.5 ms/frame |
+| Modern, 8x AA, AO + bloom + shadows + DoF | ~3 ms/frame | ~24 ms/frame |
+
+A 60 Hz frame is 16.7 ms, so the last row is the one combination that can't hold 60 fps across three monitors:
+8× MSAA at that size means resolving 87 million samples a frame, and the depth-of-field gather runs at full
+resolution on top. The fly-through tunnel has many more pieces than a box scene (about 10,000 against 1,300 at
+the default density); its costs are in the *Shadows* and *Surfaces* sections above.
 
 At 60 fps a frame lasts 16.7 ms, and with VSync the GPU idles for the rest. So in classic mode it's idle more
 than 95% of the time.
@@ -410,9 +417,9 @@ infinity, and the blur's `inf - inf` is NaN.
 | `AoRadius` | `PipeRenderer.cs` | how far SSAO looks for occluders (world units) |
 | `pow(..., 2.0)` in `AoBlurFragment` | `Shaders.cs` | AO contrast |
 | `maxBlur` in `DepthOfFieldPass` | `PipeRenderer.cs` | DoF blur size at 1080p (pixels) |
-| `depthOfFocus` in `Scene.UpdateCamera` | `Scene.cs` | how quickly things blur away from focus |
+| `depthOfFocus` in `Scene.UpdateOrbitCamera` | `Scene.cs` | how quickly things blur away from focus |
 | light directions/colours | `PipeFragment` (key light: `KeyLight` in `PipeRenderer.cs`) | the overall lighting look |
-| `ShadowMapSize` | `PipeRenderer.cs` | shadow sharpness (and memory: 2048² × 3 bytes = 12 MB) |
+| `ShadowMapSize` | `PipeRenderer.cs` | shadow sharpness (and memory: 2048² × 3 bytes, about 12–16 MB depending on how the driver pads 24-bit depth) |
 | `flightShadowRadius` | `Scene.cs` | how far ahead shadows reach in flight (bigger = blurrier) |
 | `PolygonOffset`, normal offset | `ShadowPass`, `keyLightVisibility` | shadow acne vs shadows detaching from their pipes |
 | `sky()` | `PipeFragment` | what reflections show |

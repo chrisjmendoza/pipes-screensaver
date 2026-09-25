@@ -25,13 +25,13 @@ internal readonly record struct RenderOptions(int Samples, bool AmbientOcclusion
 /// <b>Modern style</b> adds fullscreen effect passes over offscreen textures. In order:
 /// <list type="number">
 /// <item><b>Shadow map</b> (optional): depth as seen from the key light.</item>
-/// <item><b>Geometry prepass</b> (only if AO or DoF is on): normals + depth into textures.</item>
-/// <item><b>SSAO</b> + <b>blur</b>: how enclosed each pixel is, used by the next pass to darken ambient light.</item>
+/// <item><b>Geometry prepass</b> (only if AO is on, or DoF is on and blurring): normals + depth into textures.</item>
+/// <item><b>SSAO</b> + <b>blur</b> (optional): how enclosed each pixel is, used by the next pass to darken ambient light.</item>
 /// <item><b>Scene</b>: background and lit pipes into a multisampled, HDR (16-bit float) buffer.</item>
 /// <item><b>Resolve</b>: average the MSAA samples into a plain texture.</item>
-/// <item><b>Depth of field</b> (optional): blur by distance from the focus plane.</item>
+/// <item><b>Depth of field</b> (optional, and skipped in flight): blur by distance from the focus plane.</item>
 /// <item><b>Bloom</b> (optional): downsample/upsample chain for the glow.</item>
-/// <item><b>Post</b>: bloom mix, tonemap, vignette, fade, dither, into the window (or a screenshot target).</item>
+/// <item><b>Post</b>: bloom mix, tonemap, vignette, gamma, dither, fade, into the window (or a screenshot target).</item>
 /// </list>
 /// See docs/RENDERING.md for the longer explanation.
 /// </summary>
@@ -227,7 +227,10 @@ internal sealed unsafe class PipeRenderer : IDisposable
         var shadows = _options.Shadows && camera.ShadowRadius > 0f;
         var lightViewProj = shadows ? LightViewProj(camera) : Matrix4x4.Identity;
         if (shadows) ShadowPass(lightViewProj);
-        if (NeedsGeometryPass) GeometryPass(camera);
+        // Depth of field is skipped while the camera asks for no blur (in flight), and then the prepass it needs
+        // (if AO doesn't) can be skipped too.
+        var depthOfField = _options.DepthOfField && camera.FocusScale > 0f;
+        if (_options.AmbientOcclusion || depthOfField) GeometryPass(camera);
         if (_options.AmbientOcclusion) AmbientOcclusionPass(camera);
         ScenePass(camera, shadows, lightViewProj, camera.ShadowRadius * 2f / ShadowMapSize);
 
@@ -235,7 +238,7 @@ internal sealed unsafe class PipeRenderer : IDisposable
         Blit(_sceneFbo, _resolveFbo);
 
         var image = _resolveTex;
-        if (_options.DepthOfField && camera.FocusScale > 0f) // 0: the camera wants no blur right now (in flight)
+        if (depthOfField)
         {
             DepthOfFieldPass(camera, image);
             image = _dofTex;
