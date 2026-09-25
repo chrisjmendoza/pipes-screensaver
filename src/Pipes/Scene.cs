@@ -145,16 +145,13 @@ internal sealed class Scene
             case Phase.Growing:
                 Fade = 1f;
                 _world.Update(dt);
-                if (_world.IsFinished) Enter(Phase.Hold);
+                // Fly-through takes off as soon as the scene's last pipe has started, with no pause: the final pipes
+                // finish growing while the camera gets going, so building and flying run into each other.
+                if (FlyThrough && _world.AllStarted) TakeOff();
+                else if (_world.IsFinished) Enter(Phase.Hold);
                 break;
             case Phase.Hold:
-                // A shorter pause before take-off: the pause is for admiring the finished scene, and in fly-through
-                // mode you're about to see it from the inside.
-                if (_phaseTime >= (FlyThrough ? 0.8f : HoldSeconds))
-                {
-                    if (FlyThrough) TakeOff();
-                    else Enter(Phase.FadeOut);
-                }
+                if (_phaseTime >= HoldSeconds) Enter(Phase.FadeOut);
                 break;
             case Phase.Flying:
                 _world.Update(dt);
@@ -261,6 +258,7 @@ internal sealed class Scene
         tunnel.CameraS = _flightS;
         if (Airborne)
         {
+            tunnel.AdvanceSpawnBand(dt);
             // Throw away chunks well behind the camera: out of sight, and they'd otherwise pile up forever.
             _world.Recycle(centre => Vector3.Dot(centre - eye, forward) < -14f);
             tunnel.ForgetBehind();
@@ -311,7 +309,7 @@ internal sealed class Scene
     /// whichever it was flying before the turn.
     /// </para>
     /// <para>
-    /// <b>Room to roll.</b> With short straights (a wild flight style), neighbouring maneuvers' rolls could overlap and
+    /// <b>Room to roll.</b> With short straights (a wild course), neighbouring maneuvers' rolls could overlap and
     /// fight over the camera. So each maneuver may only use half the straight on either side: its rolls squeeze into
     /// that, getting quicker, and the next maneuver always starts from exactly where this one left off.
     /// </para>
@@ -674,17 +672,23 @@ internal sealed class Scene
     /// <summary>
     /// Enough pipes growing at once to keep the tunnel walls filling up as fast as the camera flies into them.
     /// Each second the camera uncovers a slice of wall (ring area × flight speed), and each pipe grows <c>Speed</c>
-    /// cells a second, so roughly (slice ÷ speed) pipes would fill it completely. Aiming for about 60% leaves gaps to
-    /// see through: a completely full tunnel looks like a wall. Slow-growing pipes need more of them. Never fewer than
-    /// the user's setting.
+    /// cells a second, so roughly (slice ÷ speed) pipes would fill it completely. How full to aim for is the tunnel
+    /// density setting: 60% by default, which leaves gaps to see through (a completely full tunnel looks like a
+    /// wall). Slow-growing pipes need more of them.
+    /// <para>
+    /// This deliberately ignores the "pipes at once" setting, which is about building the box: in flight the pipe
+    /// count has to follow the flight speed, or the walls would go bare at speed. Density is the knob instead, and
+    /// since it sets how many pipes there are to draw, it's also the one to turn down for a slower graphics card.
+    /// </para>
     /// </summary>
     private int FlightConcurrency()
     {
         var ringArea = MathF.PI * (TunnelSpace.OuterRadius * TunnelSpace.OuterRadius - TunnelSpace.InnerRadius * TunnelSpace.InnerRadius);
         // With a varying speed, size for halfway between the setting and the peak: fuller while slow, a little
         // sparser at full tilt.
-        var needed = 0.6f * ringArea * float.Lerp(FlySpeed, PeakFlySpeed, 0.5f) / _settings.Speed;
-        return Math.Max(_settings.ConcurrentPipes, Math.Min((int)MathF.Ceiling(needed), 80));
+        var fill = _settings.TunnelDensity / 10f;
+        var needed = fill * ringArea * float.Lerp(FlySpeed, PeakFlySpeed, 0.5f) / _settings.Speed;
+        return Math.Clamp((int)MathF.Ceiling(needed), 1, 80);
     }
 
     private void NewWorld()
@@ -726,10 +730,17 @@ internal sealed class Scene
             // and out the far side before its first turn. The tunnel space keeps a corridor clear along it.
             var start = _box.Center + new Vector3(0f, 0f, _distance);
             _path = new FlightPath(start, new Int3(0, 0, -1), firstRun: _distance + depth * 0.5f + 14f,
-                FlightPath.Style.ForLevel(_settings.FlightStyle), _rng);
+                FlightPath.Complexity.ForLevel(_settings.CourseComplexity), _rng);
             // Spawn far enough ahead that pipes get about 2.5 seconds to grow before the camera arrives.
-            _tunnel = new TunnelSpace(_path, _box) { SpawnAhead = MathF.Max(14f, PeakFlySpeed * 2.5f) };
+            // The tunnel starts where the path leaves the far side of the box.
+            _tunnel = new TunnelSpace(_path, _box, tunnelStartS: _distance + depth * 0.5f)
+            {
+                SpawnAhead = MathF.Max(14f, PeakFlySpeed * 2.5f),
+                CatchUpSpeed = PeakFlySpeed * 2f,
+            };
             _world = new PipeWorld(_tunnel, _settings, _rng);
+            // Some of the scene's pipes build the tunnel's first stretch; add that many so the box stays as full.
+            _world.PipeQuota = (int)MathF.Ceiling(_settings.PipesPerScene / (1f - TunnelSpace.PreBuildShare));
             _flightS = 0f;
             _sinceTakeOff = 0f;
             _up = Vector3.UnitY;

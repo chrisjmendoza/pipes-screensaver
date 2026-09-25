@@ -21,7 +21,7 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
   flown by a good (not perfect) pilot, with momentum: it rolls into left and right turns, pulls straight up into
   climbs, rolls onto its back to pull into dives, and barrel-rolls through corkscrews. With no horizon, it flies
   like a spaceship: whichever way up a maneuver leaves it becomes the new level. Flight speed is adjustable (and
-  the pilot can vary it), and a flight style slider goes from zen cruising to wild, maneuver after maneuver.
+  the pilot can vary it), and a course complexity slider goes from zen cruising to wild, maneuver after maneuver.
 - **Classic (lite) mode:** for nostalgia, or a slower PC. It renders like the 1990s original: low-poly pipes lit
   per vertex on a black background, no effects. It uses roughly a tenth of the GPU time of the modern style.
 - **Multi-monitor aware:** each monitor gets its own scene, framed for its shape (portrait monitors too), and

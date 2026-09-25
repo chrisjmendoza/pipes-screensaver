@@ -112,7 +112,10 @@ public sealed class PipeWorld
     public int PipeQuota { get; set; }
 
     /// <summary>True once the world has started its quota of pipes and all have finished.</summary>
-    public bool IsFinished => _spawned >= PipeQuota && _active.Count == 0;
+    public bool IsFinished => AllStarted && _active.Count == 0;
+
+    /// <summary>True once the world has started its quota of pipes (some may still be growing).</summary>
+    public bool AllStarted => _spawned >= PipeQuota;
 
     public void Update(float dt)
     {

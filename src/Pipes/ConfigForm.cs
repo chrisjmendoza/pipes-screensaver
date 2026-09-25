@@ -14,8 +14,10 @@ internal sealed class ConfigForm : Form
     private readonly ComboBox _camera = Dropdown("Still", "Slow orbit", "Floating drift", "Fly through the pipes");
     private readonly TrackBar _flightSpeed = Slider(1, PipesSettings.MaxFlightSpeed);
     private readonly Label _flightSpeedValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly TrackBar _flightStyle = Slider(1, PipesSettings.MaxFlightStyle);
-    private readonly Label _flightStyleValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly TrackBar _complexity = Slider(1, PipesSettings.MaxCourseComplexity);
+    private readonly Label _complexityValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly TrackBar _density = Slider(1, PipesSettings.MaxTunnelDensity);
+    private readonly Label _densityValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox _varySpeed = Check("Pilot varies the speed");
     private readonly CheckBox _separateMonitors = Check("Own scene on each monitor");
 
@@ -51,7 +53,8 @@ internal sealed class ConfigForm : Form
 
         _speed.ValueChanged += (_, _) => _speedValue.Text = $"{_speed.Value} cells/s";
         _flightSpeed.ValueChanged += (_, _) => _flightSpeedValue.Text = $"{_flightSpeed.Value} cells/s";
-        _flightStyle.ValueChanged += (_, _) => _flightStyleValue.Text = StyleName(_flightStyle.Value);
+        _complexity.ValueChanged += (_, _) => _complexityValue.Text = ComplexityName(_complexity.Value);
+        _density.ValueChanged += (_, _) => _densityValue.Text = $"{_density.Value * 10}%";
 
         // Two columns of labelled groups, so it reads at a glance instead of as one long list:
         //   Animation | Pipes
@@ -65,7 +68,8 @@ internal sealed class ConfigForm : Form
         _flightGroup = Group("Flight (fly-through camera)", _leftGroups, _leftLabels,
             ("Flight speed", WithValue(_flightSpeed, _flightSpeedValue)),
             ("", _varySpeed),
-            ("Flight style", WithValue(_flightStyle, _flightStyleValue)));
+            ("Course complexity", WithValue(_complexity, _complexityValue)),
+            ("Tunnel density", WithValue(_density, _densityValue)));
         var pipes = Group("Pipes", _rightGroups, _rightLabels,
             ("Joints", _joints),
             ("Finish", _finish),
@@ -94,6 +98,10 @@ internal sealed class ConfigForm : Form
             Process.Start(Environment.ProcessPath!, "/w");
         };
         ok.Click += (_, _) => { Apply(); _settings.Save(); Close(); };
+        // A button's DialogResult only closes a form shown with ShowDialog(). This one is the app's main window
+        // (Application.Run), where it just records the result and the window stays open, so close it explicitly.
+        // Escape presses this button too (CancelButton below).
+        cancel.Click += (_, _) => Close();
         AcceptButton = ok;
         CancelButton = cancel;
 
@@ -133,8 +141,8 @@ internal sealed class ConfigForm : Form
     /// <summary>The flight settings only matter when flying through the pipes: grey out the whole group otherwise.</summary>
     private void UpdateFlightSpeedToggle() => _flightGroup.Enabled = _camera.SelectedIndex == (int)CameraMotion.FlyThrough;
 
-    /// <summary>A word for each stretch of the flight style slider, from calm to hectic.</summary>
-    private static string StyleName(int level) => level switch
+    /// <summary>A word for each stretch of the course complexity slider, from calm to hectic.</summary>
+    private static string ComplexityName(int level) => level switch
     {
         <= 2 => "Zen",
         <= 4 => "Relaxed",
@@ -234,7 +242,7 @@ internal sealed class ConfigForm : Form
         // Sized here rather than when the dropdowns are created: only now are the final font and screen scaling
         // (DPI) known, and text measured earlier would come out too small on a scaled display.
         FitDropdowns(this);
-        foreach (var slider in new[] { _speed, _flightSpeed, _flightStyle })
+        foreach (var slider in new[] { _speed, _flightSpeed, _complexity, _density })
             slider.Height = LogicalToDeviceUnits(SliderHeight);
         AlignColumns(_leftGroups, _leftLabels);
         AlignColumns(_rightGroups, _rightLabels);
@@ -280,8 +288,10 @@ internal sealed class ConfigForm : Form
         _flightSpeed.Value = (int)Math.Round(s.FlightSpeed);
         _flightSpeedValue.Text = $"{_flightSpeed.Value} cells/s";
         _varySpeed.Checked = s.VaryFlightSpeed;
-        _flightStyle.Value = s.FlightStyle;
-        _flightStyleValue.Text = StyleName(s.FlightStyle);
+        _complexity.Value = s.CourseComplexity;
+        _complexityValue.Text = ComplexityName(s.CourseComplexity);
+        _density.Value = s.TunnelDensity;
+        _densityValue.Text = $"{s.TunnelDensity * 10}%";
         UpdateFlightSpeedToggle();
         _separateMonitors.Checked = s.SeparateMonitors;
         _joints.SelectedIndex = (int)s.Joints;
@@ -306,7 +316,8 @@ internal sealed class ConfigForm : Form
         _settings.Camera = (CameraMotion)_camera.SelectedIndex;
         _settings.FlightSpeed = _flightSpeed.Value;
         _settings.VaryFlightSpeed = _varySpeed.Checked;
-        _settings.FlightStyle = _flightStyle.Value;
+        _settings.CourseComplexity = _complexity.Value;
+        _settings.TunnelDensity = _density.Value;
         _settings.SeparateMonitors = _separateMonitors.Checked;
         _settings.Joints = (JointStyle)_joints.SelectedIndex;
         _settings.Finish = (Finish)_finish.SelectedIndex;
