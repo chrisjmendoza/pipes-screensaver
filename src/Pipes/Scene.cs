@@ -672,17 +672,23 @@ internal sealed class Scene
     /// <summary>
     /// Enough pipes growing at once to keep the tunnel walls filling up as fast as the camera flies into them.
     /// Each second the camera uncovers a slice of wall (ring area × flight speed), and each pipe grows <c>Speed</c>
-    /// cells a second, so roughly (slice ÷ speed) pipes would fill it completely. Aiming for about 60% leaves gaps to
-    /// see through: a completely full tunnel looks like a wall. Slow-growing pipes need more of them. Never fewer than
-    /// the user's setting.
+    /// cells a second, so roughly (slice ÷ speed) pipes would fill it completely. How full to aim for is the tunnel
+    /// density setting: 60% by default, which leaves gaps to see through (a completely full tunnel looks like a
+    /// wall). Slow-growing pipes need more of them.
+    /// <para>
+    /// This deliberately ignores the "pipes at once" setting, which is about building the box: in flight the pipe
+    /// count has to follow the flight speed, or the walls would go bare at speed. Density is the knob instead, and
+    /// since it sets how many pipes there are to draw, it's also the one to turn down for a slower graphics card.
+    /// </para>
     /// </summary>
     private int FlightConcurrency()
     {
         var ringArea = MathF.PI * (TunnelSpace.OuterRadius * TunnelSpace.OuterRadius - TunnelSpace.InnerRadius * TunnelSpace.InnerRadius);
         // With a varying speed, size for halfway between the setting and the peak: fuller while slow, a little
         // sparser at full tilt.
-        var needed = 0.6f * ringArea * float.Lerp(FlySpeed, PeakFlySpeed, 0.5f) / _settings.Speed;
-        return Math.Max(_settings.ConcurrentPipes, Math.Min((int)MathF.Ceiling(needed), 80));
+        var fill = _settings.TunnelDensity / 10f;
+        var needed = fill * ringArea * float.Lerp(FlySpeed, PeakFlySpeed, 0.5f) / _settings.Speed;
+        return Math.Clamp((int)MathF.Ceiling(needed), 1, 80);
     }
 
     private void NewWorld()

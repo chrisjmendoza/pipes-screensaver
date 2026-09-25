@@ -82,6 +82,13 @@ public sealed class PipesSettings
     public int CourseComplexity { get; set; } = 5;
 
     /// <summary>
+    /// Fly-through only: how full the tunnel walls are, in tenths (6 = 60%). This is what sets how many pipes there
+    /// are to draw in flight, so turning it down is the way to make flying cheaper for a slower graphics card.
+    /// (<see cref="ConcurrentPipes"/> and <see cref="PipesPerScene"/> are about building the box scene.)
+    /// </summary>
+    public int TunnelDensity { get; set; } = 6;
+
+    /// <summary>
     /// Fly-through only: the "pilot" speeds up and slows down around <see cref="FlightSpeed"/>: drifting, easing off
     /// into tight turns and corkscrews, opening up on long straights.
     /// </summary>
@@ -170,6 +177,7 @@ public sealed class PipesSettings
     public const int MaxSpeed = 80;
     public const int MaxFlightSpeed = 20;
     public const int MaxCourseComplexity = 10;
+    public const int MaxTunnelDensity = 10;
 
     public PipesSettings Clamped()
     {
@@ -178,6 +186,7 @@ public sealed class PipesSettings
         Speed = Math.Clamp(Speed, 1f, MaxSpeed);
         FlightSpeed = Math.Clamp(FlightSpeed, 1f, MaxFlightSpeed);
         CourseComplexity = Math.Clamp(CourseComplexity, 1, MaxCourseComplexity);
+        TunnelDensity = Math.Clamp(TunnelDensity, 1, MaxTunnelDensity);
         Antialiasing = Antialiasing switch { <= 0 => 0, <= 2 => 2, <= 4 => 4, _ => 8 };
         return this;
     }

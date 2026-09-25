@@ -349,8 +349,19 @@ Two properties matter:
   `PipeWorld.Recycle`, including their geometry, their occupied cells, and any pipe still growing there. Memory and
   drawing cost stay flat: a two-minute flight held steady at about 115 MB.
 - **Enough pipes:** the camera uncovers (ring area × flight speed) cells of wall per second. `FlightConcurrency`
-  raises the number of pipes growing at once so they fill about 60% of that (up to 80 pipes). Fuller than that
-  looked like a solid wall, and emptier looked bare. Slow growth speeds get more pipes to compensate.
+  sets the number of pipes growing at once so they fill a share of that (up to 80 pipes). The share is the
+  **tunnel density** setting, 10–100%, default 60%: fuller than that looked like a solid wall, and emptier looked
+  bare (though 20% makes a calm, sparse drift through space). Slow growth speeds get more pipes to compensate.
+  It deliberately ignores "pipes at once" and "pipes per scene", which are about building the box: in flight the
+  pipe count has to follow the flight speed. Density sets how many pieces there are to draw, so it's the setting
+  to turn down on a slower graphics card. Measured at 1080p with 4× MSAA:
+
+  | Density | Pieces | ms per frame |
+  |---|---|---|
+  | 20% | 1,860 | 0.77 |
+  | 40% | 4,550 | 1.24 |
+  | 60% (default) | 9,690 | 2.25 |
+  | 100% | 15,550 | 3.19 |
 - **Flight speed** is a setting (1–20 cells/s, default 5). A few things scale with it so a fast flight still looks
   right:
   - **Pipe count:** more pipes grow at once (above). With a varying speed (below), it's sized for halfway between
