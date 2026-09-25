@@ -23,8 +23,10 @@ public sealed class FlightPath
     /// <summary>
     /// One quarter-circle turn: it runs from <see cref="StartS"/> to <see cref="EndS"/> along the path, around
     /// <see cref="Centre"/>, from travelling along <see cref="From"/> to travelling along <see cref="To"/>.
+    /// <see cref="Seed"/> is a random number between 0 and 1 picked for this turn, so anything that should vary from
+    /// turn to turn (like how a "pilot" flies it) can vary, yet come out the same every time the turn is replayed.
     /// </summary>
-    public readonly record struct Turn(float StartS, float EndS, Vector3 Centre, Vector3 From, Vector3 To);
+    public readonly record struct Turn(float StartS, float EndS, Vector3 Centre, Vector3 From, Vector3 To, float Seed);
 
     public const float Spacing = 0.5f;
 
@@ -140,7 +142,7 @@ public sealed class FlightPath
             AddPoint(p, d1 * MathF.Cos(theta) + d2 * MathF.Sin(theta));
         }
 
-        _turns.Add(new Turn(startS, Length, centre, d1, d2));
+        _turns.Add(new Turn(startS, Length, centre, d1, d2, _rng.NextSingle()));
         _direction = next;
         _usedDirections.Add(next);
     }

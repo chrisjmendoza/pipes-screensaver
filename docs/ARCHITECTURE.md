@@ -205,9 +205,23 @@ units, so "distance along the path" is just an index. Two properties matter:
   upright after every maneuver, and then tried rolling to line up with the next turn straight after pulling into a
   climb. Both looked wrong in motion: a roll straight after a pull reads as the camera correcting itself.
 
-  Each turn has a *roll-in* just before its arc, the arc itself (up locked on the centre), and a *roll-out* just
-  after (when there is one). Rolls are eased with smoothstep, and a 180° roll takes 8 units of path against 6.5 for
-  90° (a little more at high flight speeds, up to 8.5, so neighbouring turns' rolls never overlap).
+  Each turn has a *roll-in* just before its arc, the arc itself (up locked on the centre), and a *roll-out* when
+  one is needed. Rolls are eased with smoothstep, and a 180° roll takes 8 units of path against 6.5 for 90° (a
+  little more at high flight speeds, up to 8.5, so neighbouring turns' rolls never overlap).
+
+  **Flown like a pilot, not a machine.** Done exactly, a left or right turn was three separate moves: roll to 90°,
+  hold it perfectly, roll back. Two habits of real pilots join them into one gesture:
+  - **Overbank:** the roll-in carries on 3–8° past what the turn needs and holds there, slightly steep, through
+    the corner.
+  - **Lead the roll-out:** pilots start rolling out *before* reaching the new heading (the rule of thumb is half
+    the bank angle early), so they arrive level instead of overshooting the heading. Here the roll-out starts
+    25–45% of the way before the end of the arc, and takes the overbank back out with it.
+
+  Each turn gets a random `Seed` when the path is built, and `Scene.Quirk` turns it into the overbank, the roll-out
+  lead, and a ±15% roll-in pace. So no two turns are flown quite alike, but replaying the same turn gives the same
+  answer (the "pure function" property below still holds). On top of that there's a faint **stick wobble**: two
+  slow sine waves adding up to about ±2° of roll. Measured through a flight, a right turn now goes: roll in to
+  about 100°, settle at 92–97° through the corner, roll out in one motion, swing about 7° past level, and settle.
 
   Two implementation notes worth copying elsewhere:
   - The *target* up vector is a **pure function of how far along the path** the camera is, not something updated a
