@@ -37,8 +37,11 @@ internal readonly record struct RenderOptions(int Samples, bool AmbientOcclusion
 /// </summary>
 internal sealed unsafe class PipeRenderer : IDisposable
 {
-    /// <summary>start(3) axis(3) side(3) color(3) params(4): must match <see cref="PipeInstance"/> and the vertex shader.</summary>
-    private const int FloatsPerInstance = 16;
+    /// <summary>
+    /// start(3) axis(3) side(3) color(3) params(4) surface(4): must match <see cref="PipeInstance"/> and the vertex
+    /// shader. The last vec4 is (surface kind, seed, wear, spare) for the procedural surfaces.
+    /// </summary>
+    private const int FloatsPerInstance = 20;
 
     private const int MaxBloomLevels = 6;
 
@@ -498,6 +501,8 @@ internal sealed unsafe class PipeRenderer : IDisposable
                 _instanceScratch[o + 9] = p.Color.X; _instanceScratch[o + 10] = p.Color.Y; _instanceScratch[o + 11] = p.Color.Z;
                 _instanceScratch[o + 12] = p.Radius; _instanceScratch[o + 13] = p.Sweep;
                 _instanceScratch[o + 14] = p.Metallic; _instanceScratch[o + 15] = p.Roughness;
+                _instanceScratch[o + 16] = p.Surface; _instanceScratch[o + 17] = p.Seed;
+                _instanceScratch[o + 18] = p.Wear; _instanceScratch[o + 19] = 0f; // spare
             }
 
             // The usual streaming pattern: the buffer keeps a fixed, generous size. Each frame, BufferData with no
@@ -598,12 +603,12 @@ internal sealed unsafe class PipeRenderer : IDisposable
         fixed (uint* i = indices)
             _gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(indices.Length * sizeof(uint)), i, BufferUsageARB.StaticDraw);
 
-        // Per-instance data (locations 2-6). A divisor of 1 makes the GPU advance these once per instance
+        // Per-instance data (locations 2-7). A divisor of 1 makes the GPU advance these once per instance
         // instead of once per vertex; that's what makes instancing work.
         var instanceVbo = _gl.GenBuffer();
         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, instanceVbo);
         const uint stride = FloatsPerInstance * sizeof(float);
-        (uint Loc, int Size, int Offset)[] attrs = [(2, 3, 0), (3, 3, 3), (4, 3, 6), (5, 3, 9), (6, 4, 12)];
+        (uint Loc, int Size, int Offset)[] attrs = [(2, 3, 0), (3, 3, 3), (4, 3, 6), (5, 3, 9), (6, 4, 12), (7, 4, 16)];
         foreach (var (loc, size, offset) in attrs)
         {
             _gl.EnableVertexAttribArray(loc);

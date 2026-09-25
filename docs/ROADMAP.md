@@ -39,6 +39,8 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - Curved elbows, ball joints, or mixed
 - Variable pipe thickness
 - Per-pipe materials (glossy/satin plastic, polished/brushed metal)
+- Procedural surfaces: grime, worn and chipped paint, rust, copper patina, galvanised spangle, cast iron; GGX
+  highlights, anisotropic for brushed metal
 - Fittings: valves, couplings, flanges; tee junctions with branch pipes
 - The teapot easter egg
 - SSAO, bloom, depth of field

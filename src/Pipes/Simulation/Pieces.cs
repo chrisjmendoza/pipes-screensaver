@@ -20,8 +20,42 @@ public enum MeshKind
     Teapot,
 }
 
-/// <summary>Surface description of a pipe. Colour is linear RGB (not sRGB).</summary>
-public readonly record struct PipeMaterial(Vector3 Color, float Metallic, float Roughness);
+/// <summary>
+/// Which procedural surface the modern pipe shader paints on a piece (<c>surface()</c> in <c>Shaders.PipeFragment</c>).
+/// The meshes have no texture coordinates, so every pattern is computed per pixel from the world position: see
+/// docs/RENDERING.md, "Surfaces: procedural texture". The classic style ignores this and draws plain colour.
+/// The numbers are part of the shader's contract (it switches on them), so only ever add to the end.
+/// </summary>
+public enum Surface
+{
+    /// <summary>Glossy paint: the palette colour with faint grime that varies its roughness and tint a little.</summary>
+    Gloss,
+    /// <summary>As <see cref="Gloss"/>, but satin: a rougher, broader sheen.</summary>
+    Satin,
+    /// <summary>Polished metal tinted by the palette colour, with smudges and fine scratches.</summary>
+    Polished,
+    /// <summary>Brushed metal: stretched (anisotropic) highlights along the pipe and a fine grain across it.</summary>
+    Brushed,
+    /// <summary>Glossy paint that has chipped and scratched down to bare steel in places, with streaks of dirt.</summary>
+    WornPaint,
+    /// <summary>Paint that has blistered into patches of rust. <see cref="PipeMaterial.Wear"/> sets how much.</summary>
+    Rusty,
+    /// <summary>Copper with green verdigris spreading over it. Ignores the palette colour.</summary>
+    Patina,
+    /// <summary>Galvanised zinc: light grey metal with a crystalline "spangle". Ignores the palette colour.</summary>
+    Galvanized,
+    /// <summary>Cast iron: nearly black, rough and speckled. Ignores the palette colour.</summary>
+    CastIron,
+}
+
+/// <summary>
+/// Surface description of a pipe. Colour is linear RGB (not sRGB). <see cref="Metallic"/> and
+/// <see cref="Roughness"/> are the surface's base values; the shader's <see cref="Surface"/> function may vary or
+/// override them per pixel. <see cref="Seed"/> (0..1) shifts the noise so two pipes of the same surface don't show
+/// the same pattern, and <see cref="Wear"/> (0..1) is how weathered the pipe is (how much rust, how many chips).
+/// </summary>
+public readonly record struct PipeMaterial(
+    Vector3 Color, float Metallic, float Roughness, Surface Surface = Surface.Gloss, float Seed = 0f, float Wear = 0.5f);
 
 /// <summary>
 /// One drawable piece. The meaning of the vectors depends on the <see cref="MeshKind"/> it's filed under:
@@ -33,7 +67,8 @@ public readonly record struct PipeMaterial(Vector3 Color, float Metallic, float 
 /// <item>Teapot: position Start, "up" Axis, "forward" Side (both already scaled to the teapot's size).</item>
 /// </list>
 /// The layout matches the per-instance vertex attributes in <c>Shaders.PipeVertex</c>, so the renderer can copy
-/// these straight into a GPU buffer.
+/// these straight into a GPU buffer: 20 floats, start(3) axis(3) side(3) color(3), then radius, sweep, metallic,
+/// roughness, then surface, seed, wear and one spare (always 0, it keeps the last attribute a whole vec4).
 /// </summary>
 public struct PipeInstance
 {
@@ -45,6 +80,12 @@ public struct PipeInstance
     public float Sweep;
     public float Metallic;
     public float Roughness;
+    /// <summary>The <see cref="Pipes.Simulation.Surface"/>, as a float because that's what the GPU attribute holds.</summary>
+    public float Surface;
+    /// <summary>0..1, offsets the surface's noise pattern. See <see cref="PipeMaterial.Seed"/>.</summary>
+    public float Seed;
+    /// <summary>0..1, how weathered. See <see cref="PipeMaterial.Wear"/>.</summary>
+    public float Wear;
 }
 
 /// <summary>A bucket of pieces per <see cref="MeshKind"/>, plus helpers that build common shapes.</summary>
@@ -98,6 +139,7 @@ public sealed class PieceLists
         {
             Start = start, Axis = axis, Side = side, Radius = radius, Sweep = sweep,
             Color = m.Color, Metallic = m.Metallic, Roughness = m.Roughness,
+            Surface = (float)m.Surface, Seed = m.Seed, Wear = m.Wear,
         });
 
     /// <summary>Two unit vectors perpendicular to <paramref name="axis"/> and to each other.</summary>

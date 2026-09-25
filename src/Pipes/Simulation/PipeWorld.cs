@@ -65,17 +65,24 @@ public sealed class PipeWorld
     /// <summary>Thicknesses to pick from when <see cref="PipesSettings.VaryThickness"/> is on. 0.2 is listed twice so it stays the most common.</summary>
     private static readonly float[] Radii = [0.12f, 0.15f, 0.2f, 0.2f, 0.24f];
 
-    /// <summary>Finishes used by <see cref="Finish.Mixed"/>, as (metallic, roughness).</summary>
-    private static readonly (float Metallic, float Roughness)[] MixedFinishes =
+    /// <summary>Surfaces for <see cref="Finish.Weathered"/>, with their relative chances (they add up to 100).</summary>
+    private static readonly (Surface Surface, float Weight)[] WeatheredSurfaces =
     [
-        (0f, 0.3f),     // glossy plastic
-        (0f, 0.6f),     // satin plastic
-        (0.85f, 0.18f), // polished metal
-        (0.8f, 0.5f),   // brushed metal
+        (Surface.WornPaint, 30f), (Surface.Rusty, 30f), (Surface.Patina, 12f),
+        (Surface.Galvanized, 10f), (Surface.CastIron, 8f), (Surface.Brushed, 10f),
     ];
 
-    /// <summary>Bare steel for valve stems and flange bolts.</summary>
-    private static readonly PipeMaterial Steel = new(ToLinear(new Vector3(0.72f, 0.73f, 0.76f)), 0.9f, 0.35f);
+    /// <summary>Surfaces for <see cref="Finish.Mixed"/>: mostly clean paint and metal, some weathered.</summary>
+    private static readonly (Surface Surface, float Weight)[] MixedSurfaces =
+    [
+        (Surface.Gloss, 22f), (Surface.Satin, 15f), (Surface.Polished, 18f), (Surface.Brushed, 12f),
+        (Surface.WornPaint, 12f), (Surface.Rusty, 10f), (Surface.Patina, 5f), (Surface.Galvanized, 3f),
+        (Surface.CastIron, 3f),
+    ];
+
+    /// <summary>Bare steel for valve stems and flange bolts: brushed, like machined parts.</summary>
+    private static readonly PipeMaterial Steel =
+        new(ToLinear(new Vector3(0.72f, 0.73f, 0.76f)), 0.9f, 0.25f, Surface.Brushed);
 
     /// <summary>Finished geometry is filed in cubes of this many cells per side, so it can be dropped a cube at a time.</summary>
     public const int ChunkSize = 8;
@@ -95,6 +102,8 @@ public sealed class PipeWorld
     private readonly List<Pipe> _active = [];
     private int _spawned;
     private int _lastColor = -1;
+    /// <summary>Pipes given a material so far: the input to <see cref="Hash01"/> for their seed and wear.</summary>
+    private int _materialCount;
 
     public PipeWorld(IPipeSpace space, PipesSettings settings, Random rng)
     {
@@ -525,13 +534,74 @@ public sealed class PipeWorld
 
     private PipeMaterial NextMaterial()
     {
-        var (metallic, roughness) = _settings.Finish switch
+        var surface = _settings.Finish switch
         {
-            Finish.Metallic => (0.85f, 0.18f),
-            Finish.Mixed => MixedFinishes[_rng.Next(MixedFinishes.Length)],
-            _ => (0f, 0.3f),
+            Finish.Metallic => Surface.Polished,
+            Finish.Weathered => Pick(WeatheredSurfaces),
+            Finish.Mixed => Pick(MixedSurfaces),
+            _ => Surface.Gloss,
         };
-        return new PipeMaterial(NextColor(), metallic, roughness);
+
+        // Seed and wear come from a hash of a counter rather than from _rng. Drawing them from _rng would shift
+        // every random choice after it, so the same /shot seed would grow different pipes than before surfaces
+        // existed. This way the layouts stay comparable (and Plastic, Metallic and Mixed draw exactly as many
+        // random numbers as they always did).
+        var n = _materialCount++;
+        var seed = Hash01(n, 1);
+        var wearRoll = Hash01(n, 2);
+        var wear = surface switch
+        {
+            Surface.WornPaint => float.Lerp(0.3f, 0.8f, wearRoll),
+            Surface.Rusty => float.Lerp(0.25f, 0.9f, wearRoll),
+            Surface.Patina => float.Lerp(0.3f, 0.9f, wearRoll),
+            _ => 0.5f,
+        };
+
+        var (metallic, roughness) = BaseValues(surface);
+        return new PipeMaterial(NextColor(), metallic, roughness, surface, seed, wear);
+    }
+
+    /// <summary>
+    /// The (metallic, roughness) a surface starts from. The shader varies these per pixel (grime, rust patches...),
+    /// and some surfaces override them entirely (copper, zinc and iron have their own colour too).
+    /// </summary>
+    private static (float Metallic, float Roughness) BaseValues(Surface surface) => surface switch
+    {
+        Surface.Satin => (0f, 0.55f),
+        Surface.Polished => (0.9f, 0.15f),
+        Surface.Brushed => (0.9f, 0.25f), // along the pipe; the shader makes it rougher across
+        Surface.Rusty => (0f, 0.35f),     // the paint between the rust
+        Surface.Patina => (1f, 0.3f),     // the copper under the patina
+        Surface.Galvanized => (0.95f, 0.4f),
+        Surface.CastIron => (0.3f, 0.75f),
+        _ => (0f, 0.3f),                  // Gloss, WornPaint: glossy paint
+    };
+
+    /// <summary>A weighted random pick: each entry's chance is its weight over the total. One draw from the RNG.</summary>
+    private Surface Pick((Surface Surface, float Weight)[] table)
+    {
+        var total = 0f;
+        foreach (var entry in table) total += entry.Weight;
+        var roll = _rng.NextSingle() * total;
+        foreach (var (surface, weight) in table)
+        {
+            if (roll < weight) return surface;
+            roll -= weight;
+        }
+        return table[^1].Surface; // only reachable through float rounding
+    }
+
+    /// <summary>
+    /// A well-mixed 0..1 value from two integers (the SplitMix64 finaliser: multiply and xor-shift until every input
+    /// bit affects every output bit). Deterministic, so the same pipe always gets the same value.
+    /// </summary>
+    private static float Hash01(int n, int salt)
+    {
+        var z = (ulong)(uint)n * 0x9E3779B97F4A7C15UL + (ulong)salt * 0xD1B54A32D192ED03UL;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9UL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBUL;
+        z ^= z >> 31;
+        return (z >> 40) / (float)(1 << 24);
     }
 
     private Vector3 NextColor()

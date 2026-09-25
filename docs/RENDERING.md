@@ -76,12 +76,12 @@ shadows, like the original.
 
 A busy scene has several thousand cylinders and spheres. Issuing a draw call per piece would be slow, because each
 call has CPU overhead. Instead, each **shape** is one mesh uploaded once (a unit cylinder, a unit sphere...), and
-each frame we upload a small **instance buffer** with 16 floats per piece. One `glDrawElementsInstanced` call per
+each frame we upload a small **instance buffer** with 20 floats per piece. One `glDrawElementsInstanced` call per
 shape draws every piece of that shape.
 
 The trick is `glVertexAttribDivisor(location, 1)` in `CreateMesh`. Normally, vertex attributes advance once per
-vertex. With divisor 1, attributes 2–6 advance once per *instance*. So inside the vertex shader, `aPos`/`aNormal`
-are the mesh vertex, and `iStart`/`iAxis`/`iSide`/`iColor`/`iParams` are "which piece am I drawing".
+vertex. With divisor 1, attributes 2–7 advance once per *instance*. So inside the vertex shader, `aPos`/`aNormal`
+are the mesh vertex, and `iStart`/`iAxis`/`iSide`/`iColor`/`iParams`/`iSurface` are "which piece am I drawing".
 
 **Streaming the instance data.** Each instance buffer keeps a fixed, generous size (room for 16,384 pieces, doubling
 if ever needed). Every frame, `glBufferData` with no data "orphans" it: the driver hands over fresh memory of the
@@ -114,20 +114,107 @@ each time, which it can't simply recycle.
 
 ## Shading (`PipeFragment`)
 
-The shading model borrows the core ideas of physically based rendering (PBR) without the full maths:
+The shading model borrows the core ideas of physically based rendering (PBR) without all of its maths. First,
+`surface()` works out what the pipe looks like at this pixel: colour, metalness, roughness and a normal (see the
+next section). Then:
 
-- **Diffuse:** `base colour × max(N·L, 0)` per light. Metals have none: all their colour comes from reflections.
-- **Specular highlight:** Blinn-Phong, `(N·H)^shininess`. Shininess comes from roughness via
-  `exp2(mix(8.5, 3.0, rough))`, so roughness 0 gives about 360 (a tiny, sharp highlight) and roughness 1 gives 8
-  (broad and soft).
-- **Fresnel (Schlick's approximation):** `F = F0 + (1 − F0)(1 − N·V)^5`. Every surface gets more reflective at
-  grazing angles. That's why pipe edges catch a bright rim. `F0` is about 4% for plastic, and the base colour
-  itself for metal, which is what makes gold look gold.
+- **Diffuse:** `albedo × (1 − metallic) × max(N·L, 0)` per light (Lambert). Metals have none: all their colour
+  comes from reflections.
+- **Specular highlight:** a *microfacet* model. The idea: a surface is made of countless microscopic mirrors
+  (facets), and roughness says how scattered their directions are. The light that reaches the eye is
+  `D × V × F × N·L`:
+  - **D, the GGX distribution:** how many facets face along the half-vector `H` (halfway between the light and the
+    eye), so would mirror the light straight at us. GGX has a bright core and a long soft tail, which is why its
+    highlights look like real paint and metal rather than the "plastic" blob of the old Blinn-Phong model. It uses
+    `alpha = roughness²`, which makes the roughness scale look even to the eye. The shader uses the *anisotropic*
+    form (Burley 2012): `D = 1 / (π·at·ab·(Ht²/at² + Hb²/ab² + Hn²)²)`, with `Ht`, `Hb`, `Hn` the half-vector
+    measured along the pipe (`T`), across it (`B`) and along the normal. With `at = ab` it is plain GGX; brushed
+    metal makes `ab` bigger, which stretches its highlight around the pipe.
+  - **V, visibility:** facets hiding and shadowing each other at grazing angles. Hammon's cheap fit,
+    `0.5 / mix(2·N·L·N·V, N·L + N·V, alpha)`.
+  - **F, Fresnel (Schlick's approximation):** `F = F0 + (1 − F0)(1 − V·H)^5`. Every surface gets more
+    reflective at grazing angles. That's why pipe edges catch a bright rim. `F0` is about 4% for paint, and the
+    surface colour itself for metal, which is what makes gold look gold.
+
+  GGX is *normalised*: a rough highlight is wider but dimmer, a smooth one small and very bright, with the same
+  total light. So there's no strength fudge (the Blinn-Phong version needed a `specScale` to keep tight
+  highlights from looking weak). The overall brightness came out the same as before, so the light colours didn't
+  need retuning.
+- **Specular anti-aliasing:** a very smooth, thin, distant pipe's highlight can be narrower than a pixel. It then
+  lands on one pixel and misses the next, and sparkles as things move. The shader widens `alpha` by how much the
+  normal changes across the pixel (Kaplanyan and Tokuyoshi's trick, as used in Google's Filament), which keeps
+  small highlights stable.
 - **Environment reflection:** there's no real environment map. `sky(dir, rough)` is a function that returns a
-  gradient plus two bright "studio light" strips. Rough materials widen the strips and dim them by the same
-  factor, which fakes a blurred reflection.
+  gradient plus two bright "studio light" strips, and a dim warm floor below the horizon so the undersides of
+  metal pipes (which show only reflections) don't go black. Rough materials widen the strips and dim them by the
+  same factor, which fakes a blurred reflection. It uses the isotropic roughness (brushed metal's two values
+  averaged), and a roughness-aware Fresnel, `F0 + (max(1 − rough, F0) − F0)(1 − N·V)^5`, so rough surfaces
+  don't get a mirror-bright rim.
 - **Ambient:** a hemisphere light, brighter from above than below.
 - **Fog:** exponential-squared, so distant pipes sink gently into the background.
+
+## Surfaces: procedural texture
+
+**Why procedural.** The meshes have no texture coordinates: a cylinder is stretched per instance, and a torus
+section's mesh doesn't even store positions (see "One vertex shader, four shapes"). Rather than add UVs and image
+textures, each surface is a small function in the fragment shader that computes its pattern from the pixel's
+**world position**, using noise. That needs no memory and no loading, never looks stretched or tiled, and a pattern
+flows continuously from a pipe onto its elbow and its ball joint, because they share the same world space.
+
+**Per-pipe data.** Each instance carries one more `vec4` (`iSurface`, location 7): the `Surface` kind, a **seed**
+and a **wear** amount (plus a spare). The seed shifts the noise (`p = world + seed × 37`), so two rusty pipes don't
+rust identically; wear (0..1) sets how much rust, how many chips, how much patina. `PipeWorld.NextMaterial` picks
+them. Seed and wear come from a hash of a counter, not from the random generator, so every other random choice
+(and so a `/shot` seed's layout) is the same as before surfaces existed.
+
+**Noise.** Everything is built from **value noise** (`vnoise`): a random number at each corner of a unit lattice,
+blended smoothly between the 8 corners around the point. Three helpers sit on top: `fbm` (a few octaves, each at
+double the frequency and half the strength, for ragged blotches), `bumpNormal` (a bump map computed on the fly: it
+treats the noise as a height field and tilts the normal down its slope, found from 3 extra samples), and `detail`
+(see below). The hash behind it all is the classic `fract(sin(x) × 43758.5)`, not great randomness but plenty for
+texture, with two tricks explained in the shader: coordinates wrap every 289 cells so `sin()` stays precise far
+out in the tunnel, and the 8 corners share one `dot()` (which only works because the hash's constants make every
+sum exact; a first version without that broke the noise into blocks).
+
+**Budget.** One `vnoise` is 8 hashes; no surface uses more than 6 per pixel (`bumpNormal` counts as 4). That sounds
+cheap, but in the tunnel pipes overlap many layers deep and hidden layers are shaded too, so each one is paid
+several times per pixel. The measured cost is under a millisecond (see below).
+
+**Detail that fades with distance.** MSAA smooths triangle edges, but it shades each pixel once, so a pattern finer
+than a pixel (grain, speckles, scratches on a distant pipe) turns into sparkling noise that crawls as the camera
+moves. `detail(freq)` fades a pattern out as its features shrink towards a pixel, leaving its average. (This is
+"frequency clamping", the standard fix for procedural textures.)
+
+**Along the pipe.** Brushed metal needs to know which way the pipe runs, so `place()` also returns a **tangent**:
+the axis for a cylinder, the direction of the sweep for a torus (the derivative of `radial`), world up flattened onto
+the surface for a ball (a ball has no "along"), and the pot's up for the teapot. The fragment shader straightens it
+against the (possibly bumped) normal per pixel.
+
+**Patterns on axis-aligned pipes.** Pipes run along the world axes, so anything built on a grid (the spangle's
+cells, value noise's own lattice) can line up with them and show as neat squares. Those patterns are read through
+a fixed tilted rotation (`TILT`), which cuts the pipes at odd angles and makes the same grid look irregular.
+
+The surfaces (sizes to keep in mind: pipes are 0.12–0.24 units thick, a cell is 1 unit):
+
+| Surface | What it imitates |
+|---|---|
+| `Gloss` | glossy paint, with faint grime blotches that vary the sheen ±0.1 and the colour ±3% |
+| `Satin` | the same, rougher (0.55) |
+| `Polished` | polished metal tinted by the palette colour: smudged patches and fine scratches that run mostly along the pipe |
+| `Brushed` | brushed metal: anisotropic GGX (0.25 along, 0.6 across) and a fine grain that varies across the pipe only |
+| `WornPaint` | gloss paint chipped and scratched to bare steel (more at joints, in clusters), dirt streaked vertically |
+| `Rusty` | paint blistered into rust patches (coverage from wear): two mottled rust tones, pitted bumps, a dark rim |
+| `Patina` | copper with soft clouds of green verdigris, more on top where rain sits, brown tarnish at their edge |
+| `Galvanized` | zinc-coated steel with a "spangle": ~0.12-unit crystal cells, each its own roughness and brightness |
+| `CastIron` | nearly black, rough, with a sand-cast bump and a few brighter speckles |
+
+Valve stems and bolts are `Brushed`; valve wheels stay `Gloss`. The **Finish** setting picks them: Plastic → Gloss,
+Metallic → Polished, Weathered → mostly worn paint and rust with some patina, galvanised, cast iron and brushed,
+and Mixed → a bit of everything, mostly clean.
+
+**Cost** (`/bench`, 1920×1080, 4× MSAA, fly-through with ~9,000 pieces): Plastic 2.24 → 2.63 ms per frame,
+Mixed 2.14 → 2.83 ms. Most of it is the noise; the GGX lighting itself costs about 0.1 ms. The classic style is
+untouched (it ignores the new data), and renders pixel-for-pixel as before.
 
 ### Why HDR?
 
@@ -329,6 +416,12 @@ infinity, and the blur's `inf - inf` is NaN.
 | `flightShadowRadius` | `Scene.cs` | how far ahead shadows reach in flight (bigger = blurrier) |
 | `PolygonOffset`, normal offset | `ShadowPass`, `keyLightVisibility` | shadow acne vs shadows detaching from their pipes |
 | `sky()` | `PipeFragment` | what reflections show |
+| one `case` per surface in `surface()` | `PipeFragment` | how each `Surface` looks: noise frequencies (features per unit), thresholds, colours |
+| `WeatheredSurfaces`, `MixedSurfaces` | `PipeWorld.cs` | which surfaces each finish uses, and how often |
+| wear ranges in `NextMaterial` | `PipeWorld.cs` | how weathered pipes get (rust coverage, chips, patina) |
+| `BaseValues` | `PipeWorld.cs` | each surface's starting metallic/roughness |
+| `detail()` | `PipeFragment` | how early fine patterns fade with distance (sparkle vs. blur) |
+| `widen` (specular anti-aliasing) | `PipeFragment` | highlight stability on thin, distant pipes vs. sharpness |
 
 ## Further reading
 
