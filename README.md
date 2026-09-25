@@ -113,7 +113,9 @@ src/Pipes/
     Camera.cs             view/projection, fog, focus and the shadow region
   Native/Win32.cs         P/Invoke declarations
   Native/VBlankWaiter.cs  sleeps until the monitor's refresh, so the driver never spins a CPU core waiting
+  Pipes.ico               app icon (exe/scr, settings dialog, GL window); generated, see scripts/make_icon.py
 scripts/publish.ps1       single-file publish -> Pipes.scr (optionally install)
+scripts/make_icon.py      generates src/Pipes/Pipes.ico procedurally (re-run after changing it)
 docs/                     how it all works (start with ARCHITECTURE.md)
 ```
 
