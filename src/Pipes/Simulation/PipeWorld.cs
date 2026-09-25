@@ -80,9 +80,34 @@ public sealed class PipeWorld
         (Surface.CastIron, 3f),
     ];
 
+    /// <summary>
+    /// Finishes for <see cref="Finish.Mixed"/> without surface detail, as (metallic, roughness): the original table,
+    /// from before the procedural surfaces. See <see cref="SurfaceDetail"/>.
+    /// </summary>
+    private static readonly (float Metallic, float Roughness)[] PlainMixedFinishes =
+    [
+        (0f, 0.3f),     // glossy plastic
+        (0f, 0.6f),     // satin plastic
+        (0.85f, 0.18f), // polished metal
+        (0.8f, 0.5f),   // brushed metal
+    ];
+
     /// <summary>Bare steel for valve stems and flange bolts: brushed, like machined parts.</summary>
-    private static readonly PipeMaterial Steel =
+    private static readonly PipeMaterial BrushedSteel =
         new(ToLinear(new Vector3(0.72f, 0.73f, 0.76f)), 0.9f, 0.25f, Surface.Brushed);
+
+    /// <summary>The same steel as it was before surfaces: plain, a little rougher to stand in for the brushing.</summary>
+    private static readonly PipeMaterial PlainSteel = new(ToLinear(new Vector3(0.72f, 0.73f, 0.76f)), 0.9f, 0.35f);
+
+    /// <summary>The steel for this world's fittings. Each pipe keeps a copy (<see cref="Pipe.Steel"/>) for EmitJoint.</summary>
+    private PipeMaterial Steel => SurfaceDetail ? BrushedSteel : PlainSteel;
+
+    /// <summary>
+    /// Whether the renderer will draw procedural surfaces (<see cref="PipesSettings.SurfaceDetail"/>, modern style
+    /// only). Without them, <see cref="NextMaterial"/> hands out the original flat materials, so turning the setting
+    /// off brings back the old look exactly, not just the new materials without their texture.
+    /// </summary>
+    private bool SurfaceDetail => _settings.SurfaceDetail && _settings.Style == GraphicsStyle.Modern;
 
     /// <summary>Finished geometry is filed in cubes of this many cells per side, so it can be dropped a cube at a time.</summary>
     public const int ChunkSize = 8;
@@ -231,6 +256,7 @@ public sealed class PipeWorld
                 Cell = pos,
                 Radius = NextRadius(),
                 Material = NextMaterial(),
+                Steel = Steel,
                 // A length budget keeps pipes from wandering forever in big grids, so more colours get a turn.
                 Remaining = _rng.Next(30, 90),
             };
@@ -255,6 +281,7 @@ public sealed class PipeWorld
         Out = parent.BranchDir,
         Radius = parent.Radius,
         Material = parent.Material,
+        Steel = parent.Steel,
         Remaining = _rng.Next(12, 40),
     };
 
@@ -476,12 +503,12 @@ public sealed class PipeWorld
                 var wheelCentre = centre + p.FittingAxis * stemLength;
                 var wheelRadius = r * 1.7f;
                 into.Sphere(centre, bodyRadius, m);
-                into.Cylinder(centre, wheelCentre, r * 0.25f, Steel);
+                into.Cylinder(centre, wheelCentre, r * 0.25f, p.Steel);
                 into.Ring(wheelCentre, p.FittingAxis, wheelRadius, r * 0.2f, p.Accent);
                 var (u, v) = PieceLists.Perpendiculars(p.FittingAxis);
                 into.Cylinder(wheelCentre - u * wheelRadius, wheelCentre + u * wheelRadius, r * 0.1f, p.Accent);
                 into.Cylinder(wheelCentre - v * wheelRadius, wheelCentre + v * wheelRadius, r * 0.1f, p.Accent);
-                into.Sphere(wheelCentre, r * 0.3f, Steel);
+                into.Sphere(wheelCentre, r * 0.3f, p.Steel);
                 break;
             }
 
@@ -512,7 +539,7 @@ public sealed class PipeWorld
                 {
                     var angle = MathF.Tau * k / 6f;
                     var bolt = centre + (u * MathF.Cos(angle) + v * MathF.Sin(angle)) * (discRadius * 0.78f);
-                    into.Cylinder(bolt - along * 0.09f, bolt + along * 0.09f, discRadius * 0.085f, Steel);
+                    into.Cylinder(bolt - along * 0.09f, bolt + along * 0.09f, discRadius * 0.085f, p.Steel);
                 }
                 break;
             }
@@ -534,6 +561,8 @@ public sealed class PipeWorld
 
     private PipeMaterial NextMaterial()
     {
+        if (!SurfaceDetail) return NextPlainMaterial();
+
         var surface = _settings.Finish switch
         {
             Finish.Metallic => Surface.Polished,
@@ -559,6 +588,23 @@ public sealed class PipeWorld
 
         var (metallic, roughness) = BaseValues(surface);
         return new PipeMaterial(NextColor(), metallic, roughness, surface, seed, wear);
+    }
+
+    /// <summary>
+    /// A material the way it was picked before the procedural surfaces: a flat colour with one metallic and roughness
+    /// (the shader ignores the Surface fields when surface detail is off). It draws from the random generator exactly
+    /// as the old code did, so a /shot seed grows the same scene it did back then. Weathered has no flat version: it
+    /// falls back to Mixed.
+    /// </summary>
+    private PipeMaterial NextPlainMaterial()
+    {
+        var (metallic, roughness) = _settings.Finish switch
+        {
+            Finish.Metallic => (0.85f, 0.18f),
+            Finish.Mixed or Finish.Weathered => PlainMixedFinishes[_rng.Next(PlainMixedFinishes.Length)],
+            _ => (0f, 0.3f),
+        };
+        return new PipeMaterial(NextColor(), metallic, roughness);
     }
 
     /// <summary>
@@ -682,6 +728,8 @@ public sealed class PipeWorld
         public int Remaining;
         public float Radius;
         public PipeMaterial Material;
+        /// <summary>Valve stems and flange bolts (brushed or plain, see <see cref="PipeWorld.Steel"/>).</summary>
+        public PipeMaterial Steel;
         public bool Alive = true;
     }
 }

@@ -11,7 +11,8 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
 - **Variety:** pipes come in several thicknesses and surfaces: glossy or satin paint, polished or brushed metal,
   and a Weathered finish with chipped paint, rust, copper gone green, galvanised steel and cast iron. The Mixed
   finish gives each pipe its own. The surfaces are procedural (computed per pixel from noise, no textures), so the
-  wear on each pipe is different.
+  wear on each pipe is different. Untick **Surface detail** for the original clean look: flat colours, plastic
+  highlights.
 - **Modern shading:** HDR lighting, two lights plus sky ambient, GGX highlights (stretched along brushed metal),
   Fresnel reflections, ACES tonemapping, up to 8x MSAA, depth fog, vignette and dithering (no banding).
 - **Effects:** shadows from the key light (soft-edged, and dappled inside the tunnel), screen-space ambient

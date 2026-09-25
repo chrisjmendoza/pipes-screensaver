@@ -29,6 +29,7 @@ internal sealed class ConfigForm : Form
 
     private readonly ComboBox _style = Dropdown("Modern", "Classic (lite, like the original)");
     private readonly ComboBox _aa = Dropdown("Off", "2x", "4x", "8x");
+    private readonly CheckBox _surfaces = Check("Surface detail (grime, scratches, rust; off = flat)");
     private readonly CheckBox _shadows = Check("Shadows (pipes shade the pipes behind them)");
     private readonly CheckBox _ao = Check("Ambient occlusion (soft contact shadows)");
     private readonly CheckBox _bloom = Check("Bloom (glow on highlights)");
@@ -79,6 +80,7 @@ internal sealed class ConfigForm : Form
         var graphics = Group("Graphics", _rightGroups, _rightLabels,
             ("Style", _style),
             ("Anti-aliasing", _aa),
+            ("", _surfaces),
             ("", _shadows),
             ("", _ao),
             ("", _bloom),
@@ -132,6 +134,17 @@ internal sealed class ConfigForm : Form
             if (_style.SelectedIndex == (int)GraphicsStyle.Classic) UseClassicPipes();
             UpdateEffectToggles();
         };
+
+        // The Weathered finish is all surface detail (flat, it would just be Mixed), so the two go together: picking
+        // Weathered turns detail on, and turning detail off moves Weathered to Mixed.
+        _finish.SelectedIndexChanged += (_, _) =>
+        {
+            if (_finish.SelectedIndex == (int)Finish.Weathered) _surfaces.Checked = true;
+        };
+        _surfaces.CheckedChanged += (_, _) =>
+        {
+            if (!_surfaces.Checked && _finish.SelectedIndex == (int)Finish.Weathered) _finish.SelectedIndex = (int)Finish.Mixed;
+        };
     }
 
     /// <summary>
@@ -161,11 +174,11 @@ internal sealed class ConfigForm : Form
         _ => "Wild",
     };
 
-    /// <summary>The effects only exist in the modern style.</summary>
+    /// <summary>The effects (and the surface detail) only exist in the modern style.</summary>
     private void UpdateEffectToggles()
     {
         var modern = _style.SelectedIndex == (int)GraphicsStyle.Modern;
-        _shadows.Enabled = _ao.Enabled = _bloom.Enabled = _dof.Enabled = modern;
+        _surfaces.Enabled = _shadows.Enabled = _ao.Enabled = _bloom.Enabled = _dof.Enabled = modern;
     }
 
     /// <summary>
@@ -311,6 +324,7 @@ internal sealed class ConfigForm : Form
         _teapots.Checked = s.Teapots;
         _style.SelectedIndex = (int)s.Style;
         _aa.SelectedIndex = s.Antialiasing switch { 0 => 0, 2 => 1, 4 => 2, _ => 3 };
+        _surfaces.Checked = s.SurfaceDetail;
         _ao.Checked = s.AmbientOcclusion;
         _bloom.Checked = s.Bloom;
         _dof.Checked = s.DepthOfField;
@@ -336,6 +350,7 @@ internal sealed class ConfigForm : Form
         _settings.Teapots = _teapots.Checked;
         _settings.Style = (GraphicsStyle)_style.SelectedIndex;
         _settings.Antialiasing = _aa.SelectedIndex switch { 0 => 0, 1 => 2, 2 => 4, _ => 8 };
+        _settings.SurfaceDetail = _surfaces.Checked;
         _settings.AmbientOcclusion = _ao.Checked;
         _settings.Bloom = _bloom.Checked;
         _settings.DepthOfField = _dof.Checked;

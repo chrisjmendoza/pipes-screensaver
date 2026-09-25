@@ -100,6 +100,16 @@ internal static class Shaders
         }
         """;
 
+    /// <summary>
+    /// Adds <c>#define name value</c> to a shader, right after its <c>#version</c> line (GLSL insists the version comes
+    /// first). A preprocessor switch like this is how one shader source can compile into different variants.
+    /// </summary>
+    public static string WithDefine(string source, string name, int value)
+    {
+        var endOfVersion = source.IndexOf('\n') + 1;
+        return source.Insert(endOfVersion, $"#define {name} {value}\n");
+    }
+
     /// <summary>Modern vertex shader: place the vertex and pass everything on for per-pixel lighting.</summary>
     public const string PipeVertex = """
         #version 330 core
@@ -179,9 +189,16 @@ internal static class Shaders
     /// meshes have no texture coordinates), then two lights with a GGX specular (anisotropic, for brushed metal),
     /// hemispheric ambient, Schlick fresnel and a fake environment reflection. PBR ideas, tuned to look good rather
     /// than be exact. See docs/RENDERING.md, "Shading" and "Surfaces: procedural texture".
+    /// <para>
+    /// It needs <c>SURFACES</c> defined as 1 or 0 (<see cref="WithDefine"/>), from the Surface detail setting. With 0
+    /// it's the original modern look: flat colour per pipe and a Blinn-Phong highlight, the same as before the
+    /// surfaces were added. The switch is made when compiling rather than with a uniform, so the "off" version
+    /// really is the old shader: the noise functions are never called, and the compiler drops them.
+    /// </para>
     /// </summary>
     public const string PipeFragment = """
         #version 330 core
+        // SURFACES: 1 = procedural surfaces + GGX, 0 = the original flat shading. Defined by PipeRenderer.
         in vec3 vWorld;
         in vec3 vNormal;
         in vec3 vTangent;
@@ -484,12 +501,17 @@ internal static class Shaders
         // Fake "studio" environment for reflections: a sky gradient with two soft light strips, so glossy pipes get
         // long, readable highlights. Rougher surfaces see blurrier strips: we widen them and dim them by the same
         // factor, which keeps their total energy about the same (like a real blurry reflection). Below the horizon,
-        // a dim warm "floor" bounce, so the undersides of metal pipes (which show only reflections) don't go black.
+        // a dim warm "floor" bounce, so the undersides of metal pipes (which show only reflections) don't go black
+        // (with surfaces off, the original's darker floor).
         vec3 sky(vec3 dir, float rough)
         {
             vec3 horizon = vec3(0.10, 0.12, 0.18);
             vec3 zenith  = vec3(0.45, 0.55, 0.80);
+        #if SURFACES
             vec3 ground  = vec3(0.05, 0.04, 0.035);
+        #else
+            vec3 ground  = vec3(0.015, 0.015, 0.02); // the original's near-black floor
+        #endif
             vec3 c = dir.y >= 0.0
                 ? mix(horizon, zenith, pow(dir.y, 0.7))
                 : mix(horizon, ground, min(-dir.y * 3.0, 1.0));
@@ -504,7 +526,11 @@ internal static class Shaders
             vec3 Ngeo = normalize(vNormal);
             vec3 V = normalize(uCameraPos - vWorld);
             if (dot(Ngeo, V) < 0.0) Ngeo = -Ngeo; // seeing the inside of something (e.g. a spout): light it as the front
+            float ao = uUseAO == 1 ? texture(uAO, gl_FragCoord.xy * uInvViewport).r : 1.0;
 
+            // Two versions of the lighting, picked when the shader is compiled (see SURFACES above). Each one works
+            // out direct, ambient and reflection; the fog and the rest at the end are shared.
+        #if SURFACES
             // The surface: colour, metalness, roughness and a (maybe bumped) normal for this pixel. The seed shifts the
             // pattern per pipe; a plain translation is enough.
             gPixel = max(length(dFdx(vWorld)), length(dFdy(vWorld)));
@@ -572,8 +598,6 @@ internal static class Shaders
                 direct += lightCols[i] * (diffuse + D * Vis * F * NdotL);
             }
 
-            float ao = uUseAO == 1 ? texture(uAO, gl_FragCoord.xy * uInvViewport).r : 1.0;
-
             // Ambient: a hemisphere light (brighter from above) for the diffuse part, and the sky reflection for the
             // specular part. AO darkens these, since they're light arriving from all around. Direct light gets a
             // lighter touch of it (that is really a shadow's job), which still helps contact points read.
@@ -584,6 +608,44 @@ internal static class Shaders
             vec3 R = reflect(-V, N);
             vec3 Fenv = F0 + (max(vec3(1.0 - roughIso), F0) - F0) * pow(1.0 - NdotV, 5.0);
             vec3 reflection = sky(R, roughIso) * Fenv * mix(0.5, 2.4, s.metallic) * mix(1.0, 0.6, roughIso);
+        #else
+            // The original look: one flat colour, metalness and roughness per pipe, and a Blinn-Phong highlight.
+            // This is the shading from before the procedural surfaces, kept as it was.
+            vec3 N = Ngeo;
+            float metal = vMaterial.x;
+            float rough = vMaterial.y;
+            vec3 base = vColor;
+
+            // Fresnel: surfaces reflect more at grazing angles. F0 is the head-on reflectance: ~4% for plastic,
+            // the surface colour itself for metal. (NdotV is clamped to 1 too, for the NaN reason given above.)
+            vec3 F0 = mix(vec3(0.04), base, metal);
+            float NdotV = clamp(dot(N, V), 0.0, 1.0);
+            vec3 F = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
+
+            // Blinn-Phong highlight whose tightness comes from roughness. The strength is scaled up a bit for tight
+            // highlights so a small highlight is also a bright one.
+            float shininess = exp2(mix(8.5, 3.0, rough));
+            float specScale = 2.5 * sqrt(clamp(shininess / 120.0, 0.25, 2.0));
+
+            vec3 lightDirs[2] = vec3[](uKeyLight, normalize(vec3(-0.7, 0.2, -0.4)));
+            vec3 lightCols[2] = vec3[](vec3(2.6, 2.45, 2.25) * keyLightVisibility(N), vec3(0.45, 0.55, 0.8));
+
+            vec3 direct = vec3(0.0);
+            for (int i = 0; i < 2; i++)
+            {
+                vec3 L = lightDirs[i];
+                vec3 H = normalize(L + V);
+                float NdotL = max(dot(N, L), 0.0);
+                float spec = pow(max(dot(N, H), 0.0), shininess);
+                vec3 diffuse = base * (1.0 - metal) * NdotL; // metals have no diffuse, only reflection
+                direct += lightCols[i] * (diffuse + F * spec * NdotL * specScale);
+            }
+
+            vec3 hemi = mix(vec3(0.03, 0.03, 0.04), vec3(0.16, 0.18, 0.24), N.y * 0.5 + 0.5);
+            vec3 ambient = base * hemi * (1.0 - metal * 0.7);
+            vec3 R = reflect(-V, N);
+            vec3 reflection = sky(R, rough) * F * mix(0.5, 2.4, metal) * mix(1.0, 0.6, rough);
+        #endif
 
             vec3 color = direct * mix(1.0, ao, 0.5) + ambient * ao + reflection * ao;
 
