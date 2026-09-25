@@ -44,4 +44,5 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - Banking: the fly-through camera rolls through turns like a plane (including 180° rolls into dives)
 - Flight speed setting
 - Roll momentum: banking swings a little past each bank and past level, then eases back
+- Pilot feel: overbanks and holds through the corner, leads the roll-out, varies each turn, faint stick wobble
 - Frame pacing that sleeps instead of letting the driver spin: CPU from up to a full core down to 7–15%

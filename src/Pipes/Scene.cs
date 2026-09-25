@@ -39,6 +39,9 @@ internal sealed class Scene
     /// <summary>The roll spring is stepped at least this finely, so a slow or hitching frame can't make it unstable.</summary>
     private const float RollStep = 1f / 120f;
 
+    /// <summary>Multiply by this to turn degrees into radians.</summary>
+    private const float Degrees = MathF.PI / 180f;
+
     private readonly PipesSettings _settings;
     private readonly Random _rng;
 
@@ -183,7 +186,10 @@ internal sealed class Scene
         var (ahead, _) = path.Pose(_flightS + LookAhead);
         var forward = Vector3.Normalize(ahead - position);
 
-        _up = FollowRoll(BankedUp(position, forward), forward, dt);
+        // A hand on the stick is never perfectly still: a slow, faint roll wobble (two unrelated sine waves, so it
+        // never visibly repeats) on top of the banking. It goes through the spring with everything else.
+        var wobble = ease * Degrees * (1.2f * MathF.Sin(_time * 0.53f + _phases.Z) + 0.8f * MathF.Sin(_time * 0.87f + _phases.W));
+        _up = FollowRoll(Rotate(BankedUp(position, forward), forward, wobble), forward, dt);
 
         // A gentle bob and sway while flying, well inside the corridor so it never brushes a pipe.
         var side = Vector3.Cross(forward, _up);
@@ -224,7 +230,22 @@ internal sealed class Scene
     /// </list>
     /// <para>
     /// Each turn therefore has three parts along the path: a roll-in just before the arc (only if the camera isn't
-    /// already facing the turn), the arc itself (up locked onto the centre), and sometimes a roll-out just after it.
+    /// already facing the turn), the arc itself (up locked onto the centre), and sometimes a roll-out.
+    /// </para>
+    /// <para>
+    /// <b>Flown by a good pilot, not a machine.</b> Done exactly, that's roll to 90°, hold it perfectly, roll back:
+    /// three separate moves. Two habits of real pilots join them into one gesture:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><b>Overbanking:</b> the roll-in goes a few degrees past what the turn needs (the camera is already
+    /// facing the centre), and it holds there, a bit steep, through the corner.</item>
+    /// <item><b>Leading the roll-out:</b> pilots start rolling out <i>before</i> reaching the new heading (the rule of
+    /// thumb is half the bank angle early), so they arrive level instead of overshooting. Here the roll-out starts
+    /// 25–45% of the way before the end of the arc, and takes the overbank back out along with it.</item>
+    /// </list>
+    /// <para>
+    /// How steep, how early, and how quickly each roll-in happens varies a little with each turn's
+    /// <see cref="FlightPath.Turn.Seed"/>, so no two turns are flown quite the same.
     /// </para>
     /// <para>
     /// <b>There's no horizon</b>, so it's treated like flying through space: whatever attitude a turn ends with is
@@ -251,19 +272,30 @@ internal sealed class Scene
             // On the approach, the turn's centre lies exactly along turn.To; on the way out, exactly behind (-From).
             var rollIn = SignedAngle(levelBefore, turn.To, turn.From);
             var rollOut = SignedAngle(-turn.From, levelAfter, turn.To);
-            var rollInStart = turn.StartS - RollDistance(rollIn, SpeedFactor);
-            var rollOutEnd = turn.EndS + RollDistance(rollOut, SpeedFactor);
+
+            // This turn's pilot quirks. Overbank only happens when there's a roll-in to carry on past.
+            var overbank = rollIn == 0f ? 0f : MathF.Sign(rollIn) * float.Lerp(3f, 8f, Quirk(turn.Seed, 1)) * Degrees;
+            var rollInLength = MathF.Min(RollDistance(rollIn, SpeedFactor) * float.Lerp(0.85f, 1.15f, Quirk(turn.Seed, 2)), 8.5f);
+            var lead = float.Lerp(0.25f, 0.45f, Quirk(turn.Seed, 3)) * (turn.EndS - turn.StartS);
+
+            var rollInStart = turn.StartS - rollInLength;
+            var rollOutStart = turn.EndS - lead;
+            var rollOutEnd = rollOutStart + RollDistance(rollOut, SpeedFactor);
 
             if (s < rollInStart) break; // this turn (and every later one) hasn't started yet
 
-            if (s < turn.StartS) // rolling in
-                return Rotate(levelBefore, forward, rollIn * Ease((s - rollInStart) / (turn.StartS - rollInStart)));
+            if (s < turn.StartS) // rolling in, and a little past
+                return Rotate(levelBefore, forward, (rollIn + overbank) * Ease((s - rollInStart) / rollInLength));
 
-            if (s <= turn.EndS) // in the turn: up locked onto the centre
-                return Perpendicular(turn.Centre - position, forward);
-
-            if (s < rollOutEnd) // rolling out
-                return Rotate(-turn.From, forward, rollOut * Ease((s - turn.EndS) / (rollOutEnd - turn.EndS)));
+            if (s <= turn.EndS || s < rollOutEnd)
+            {
+                // In the turn, up is measured from the centre; after it, from where the centre ended up (-From).
+                // The two meet at the end of the arc, so it's seamless. On top of that: the overbank, which the
+                // roll-out gradually swaps for the roll back to level.
+                var centre = s <= turn.EndS ? turn.Centre - position : -turn.From;
+                var rollingOut = Ease((s - rollOutStart) / (rollOutEnd - rollOutStart));
+                return Rotate(Perpendicular(centre, forward), forward, float.Lerp(overbank, rollOut, rollingOut));
+            }
 
             level = levelAfter;
         }
@@ -373,6 +405,17 @@ internal sealed class Scene
     /// <summary><paramref name="v"/> with any part along <paramref name="forward"/> removed, as a unit vector.</summary>
     private static Vector3 Perpendicular(Vector3 v, Vector3 forward) =>
         Vector3.Normalize(v - forward * Vector3.Dot(v, forward));
+
+    /// <summary>
+    /// A repeatable "random" number between 0 and 1 from a turn's seed, a different one for each <paramref name="k"/>.
+    /// It's the classic shader hash: multiply a sine by a big number and keep the fraction, which scrambles nearby
+    /// inputs into unrelated outputs. Not good randomness, but plenty for varying how a turn is flown.
+    /// </summary>
+    private static float Quirk(float seed, int k)
+    {
+        var x = MathF.Sin(seed * 12.9898f + k * 78.233f) * 43758.547f;
+        return x - MathF.Floor(x);
+    }
 
     /// <summary>Smoothstep: 0 to 1 with a gentle start and finish.</summary>
     private static float Ease(float t)
