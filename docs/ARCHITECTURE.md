@@ -160,21 +160,30 @@ along the path" is just an index. The maneuvers, all built from circular arcs:
 
 | Maneuver | Shape | How often |
 |---|---|---|
-| Turn | quarter circle, radius 8, into a new direction | 55% |
-| Sweep | quarter circle, radius 22–30: a long, lazy curve into a new direction | 25% |
-| Meander | shallow arcs (radius 18–26) swinging 20–30° side to side, 2–4 times, then straightening up the same way | 20% |
+| Turn | quarter circle, radius 8, into a new direction | 50% |
+| Sweep | quarter circle, radius 22–30: a long, lazy curve into a new direction | 22% |
+| Meander | shallow arcs (radius 18–26) swinging 20–30° side to side, 2–4 times, then straightening up the same way | 18% |
+| Corkscrew | a spiral round the direction of travel: radius 3.5–5, one coil every 32–40 units, 1–2 coils | 10% |
 
 A meander's swings are `+θ, −2θ, +2θ, …, ±θ`: they add up to no turn, so it comes out heading exactly the way it
 went in.
+
+A corkscrew (`FlightPath.Helix`) is the one shape that isn't made of arcs. It's defined by distance along its
+axis, `a`: the path winds round the axis by `2π·a ÷ pitch` and sits `radius(a)` out from it. The radius opens up
+with a smoothstep over the first half coil and closes the same way over the last. Where a smoothstep is 0 its slope
+is 0 too, so at both ends the spiral is heading straight down the axis and joins the straights without a kink. Path
+points must be evenly spaced *along the path*, not along the axis, so it walks the axis in tiny steps, measures the
+distance covered, and drops a point every 0.5 units.
 
 Two properties matter:
 
 - **It never doubles back.** Once it has moved in a direction (say +X), it's never allowed to move in the opposite
   one (−X). So it only ever advances along each axis, and can't loop round into the tunnel it already built. There
   are always at least two turns left to choose from, so it never gets stuck. A meander wanders a few units back and
-  forth sideways, but its sideways axis is picked like a turn, so its overall drift obeys the rule. Checked on six
-  flights: no two parts of the path at least 40 units apart ever came closer than 30 units (the tunnel walls would
-  only touch at 13).
+  forth sideways, but its sideways axis is picked like a turn, so its overall drift obeys the rule. A corkscrew's
+  coils are a whole pitch (32+ units) apart. Checked on eight flights, corkscrews included: no two parts of the path
+  at least 20 units apart ever came closer than 16.6 units (the chord across an ordinary turn), and the tunnel walls
+  would only touch at 13.
 - **Fast "how far from the path?" lookups.** Path points are filed in 8-unit buckets, so finding the nearest point
   to a cell only checks the 27 buckets around it, not the whole path.
 
@@ -252,6 +261,18 @@ Two properties matter:
 
   Measured: sideways sweeps hold 36–44° through the curve; meanders weave between about +50° and −50°, like flying
   down a snake; vertical sweeps don't roll.
+
+  **Corkscrews are a slow barrel roll** (`Scene.Corkscrew`). The centre of a spiral's curve always lies towards its
+  axis, so the tight-turn rule applies: up faces the axis. As the path winds round, that means rolling steadily, one
+  full roll per coil, with the tunnel ahead always curving the same way on screen while the pipes spin round you.
+  Each corkscrew leans 15–45° off facing the axis, so the curve ahead runs diagonally: a long sloping bank.
+  - The roll is an angle that **keeps growing** instead of wrapping at ±180°, so it runs smoothly through whole
+    turns. It's the start angle plus how far the path has wound round the axis, nudged to the exact attitude (the
+    camera looks along the spiral, not straight down the axis).
+  - It **blends in** while the spiral opens up, and **blends out** to the nearest whole number of turns while it
+    closes, which is level again. Both blends take the shorter way round, so neither is more than half a turn.
+  - Measured: once the spiral is open, the attitude holds steady relative to the axis (lean plus 5–8° of spring
+    lag, since the spring always trails a steady roll slightly), and it comes out within 2° of level.
 
   Two implementation notes worth copying elsewhere:
   - The *target* up vector is a **pure function of how far along the path** the camera is, not something updated a

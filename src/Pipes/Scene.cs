@@ -258,7 +258,8 @@ internal sealed class Scene
     /// <see cref="FlightPath.Maneuver.Seed"/>, so no two turns are flown quite the same.
     /// </para>
     /// <para>
-    /// <b>Sweeps and meanders</b> are gentler and banked differently: see <see cref="GentleCurve"/>.
+    /// <b>Sweeps and meanders</b> are gentler and banked differently: see <see cref="GentleCurve"/>. So are
+    /// <b>corkscrews</b>: see <see cref="Corkscrew"/>.
     /// </para>
     /// <para>
     /// <b>There's no horizon</b>, so it's treated like flying through space: whatever attitude a turn ends with is
@@ -281,9 +282,12 @@ internal sealed class Scene
 
         foreach (var maneuver in _path.Maneuvers)
         {
-            var (up, after) = maneuver.Kind == FlightPath.Kind.Turn
-                ? TightTurn(maneuver, level, s, position, forward)
-                : GentleCurve(maneuver, level, s, forward);
+            var (up, after) = maneuver.Kind switch
+            {
+                FlightPath.Kind.Turn => TightTurn(maneuver, level, s, position, forward),
+                FlightPath.Kind.Corkscrew => Corkscrew(maneuver, level, s, position, forward),
+                _ => GentleCurve(maneuver, level, s, forward),
+            };
             if (up is { } flying) return flying;     // in the middle of this one
             if (after is not { } done) break;        // not started yet (and nor has any later one)
             level = done;                            // already flown: the attitude it left is the new level
@@ -367,6 +371,51 @@ internal sealed class Scene
         var right = Vector3.Cross(forward, level);
         var bank = Math.Clamp(MathF.Atan(Vector3.Dot(curvature, right) * BankPerCurvature), -MaxGentleBank, MaxGentleBank);
         return (Rotate(level, forward, bank), null);
+    }
+
+    /// <summary>
+    /// A corkscrew, flown as a slow barrel roll. Same return convention as <see cref="TightTurn"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The centre of a spiral's curve always lies towards its axis, so the tight-turn rule, "up points at the centre",
+    /// applies here too: up faces the axis. Because the path winds round the axis, that means rolling steadily, one
+    /// full roll per coil, with the tunnel ahead forever curving the same way on screen while the pipes spin round.
+    /// Each corkscrew also leans 15–45° off that (the seed picks how far and which way), so the curve ahead runs
+    /// diagonally across the view, a long sloping bank rather than a straight pull.
+    /// </para>
+    /// <para>
+    /// The roll is tracked as an angle that keeps growing (not wrapped to ±180°), so it can run smoothly through full
+    /// turns. It starts from the level before the corkscrew, blends in while the spiral opens up, and while it closes
+    /// down it blends back out to the nearest whole number of turns, which is level again. Both blends roll the
+    /// shorter way, so neither is more than half a turn.
+    /// </para>
+    /// </remarks>
+    private (Vector3? Up, Vector3? After) Corkscrew(FlightPath.Maneuver corkscrew, Vector3 levelBefore, float s, Vector3 position, Vector3 forward)
+    {
+        if (s < corkscrew.StartS) return (null, null);
+        if (s > corkscrew.EndS) return (null, levelBefore); // it comes out heading the same way, as level as it went in
+
+        var h = corkscrew.Helix;
+        var a = h.Along(position);
+        var lean = (Quirk(corkscrew.Seed, 1) < 0.5f ? -1f : 1f) * float.Lerp(15f, 45f, Quirk(corkscrew.Seed, 2)) * Degrees;
+
+        // The roll (around the axis, from level) that faces the axis at the start, plus the lean. Shifted by whole
+        // turns so that, once the spiral has opened up (half a coil in), it's within half a turn of level.
+        var first = SignedAngle(levelBefore, -h.U, h.Axis) + lean;
+        var openedUp = first + h.Angle(h.RampLength);
+        first -= MathF.Round(openedUp / MathF.Tau) * MathF.Tau;
+
+        // Facing the axis a units along: the start angle plus however far the path has wound round since. The camera
+        // looks along the spiral, not straight down the axis, so nudge that to the exact attitude facing the axis.
+        var facing = first + h.Angle(a);
+        var exact = Rotate(Perpendicular(-h.Outward(a), forward), forward, lean);
+        facing += SignedAngle(Rotate(levelBefore, forward, facing), exact, forward);
+
+        var home = MathF.Round((first + h.Angle(h.Length)) / MathF.Tau) * MathF.Tau; // whole turns: level again
+        var into = Ease(a / h.RampLength);
+        var outOf = Ease((a - (h.Length - h.RampLength)) / h.RampLength);
+        return (Rotate(levelBefore, forward, float.Lerp(into * facing, home, outOf)), null);
     }
 
     /// <summary>
