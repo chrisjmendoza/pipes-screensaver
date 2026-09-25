@@ -94,7 +94,7 @@ public sealed class FlightPath
         private static readonly Complexity Wild = new(3f, 10f, 0.50f, 0.10f, 0.15f);
 
         /// <summary>
-        /// The style for a slider position from 1 to 10. Level 5 is <see cref="Balanced"/>; below it blends towards
+        /// The complexity for a slider position from 1 to 10. Level 5 is <see cref="Balanced"/>; below it blends towards
         /// <see cref="Zen"/> (at 1), above it towards <see cref="Wild"/> (at 10).
         /// </summary>
         public static Complexity ForLevel(int level) => level <= 5
