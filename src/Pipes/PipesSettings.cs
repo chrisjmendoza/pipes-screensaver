@@ -75,6 +75,18 @@ public sealed class PipesSettings
     /// <summary>Fly-through only: how fast the camera flies, in grid cells per second.</summary>
     public float FlightSpeed { get; set; } = 5f;
 
+    /// <summary>
+    /// Fly-through only: how busy the flight is, from 1 (zen: long straights and lazy curves) to 10 (wild: maneuver
+    /// after maneuver, lots of corkscrews). 5 is balanced.
+    /// </summary>
+    public int FlightStyle { get; set; } = 5;
+
+    /// <summary>
+    /// Fly-through only: the "pilot" speeds up and slows down around <see cref="FlightSpeed"/>: drifting, easing off
+    /// into tight turns and corkscrews, opening up on long straights.
+    /// </summary>
+    public bool VaryFlightSpeed { get; set; } = true;
+
     // ---- Pipes ----
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -154,6 +166,7 @@ public sealed class PipesSettings
     public const int MaxPipesPerScene = 200;
     public const int MaxSpeed = 80;
     public const int MaxFlightSpeed = 20;
+    public const int MaxFlightStyle = 10;
 
     public PipesSettings Clamped()
     {
@@ -161,6 +174,7 @@ public sealed class PipesSettings
         PipesPerScene = Math.Clamp(PipesPerScene, ConcurrentPipes, MaxPipesPerScene);
         Speed = Math.Clamp(Speed, 1f, MaxSpeed);
         FlightSpeed = Math.Clamp(FlightSpeed, 1f, MaxFlightSpeed);
+        FlightStyle = Math.Clamp(FlightStyle, 1, MaxFlightStyle);
         Antialiasing = Antialiasing switch { <= 0 => 0, <= 2 => 2, <= 4 => 4, _ => 8 };
         return this;
     }

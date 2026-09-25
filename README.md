@@ -16,10 +16,12 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
 - **Scene flow:** pipes have a length budget so every scene gets a variety of colours. When a scene is done it
   holds for a moment, fades out, and restarts from a new angle. The camera can stay still, orbit, or float.
 - **Fly through the pipes:** a camera mode where, once the scene is built, the camera dives into it and flies on
-  through an endless tunnel of pipes growing ahead of it. The tunnel turns every so often, and its pipes flow with
-  or against the flight. The camera banks through turns like a plane: it rolls into left and right turns, pulls
-  straight up into climbs, and rolls onto its back to pull into dives. With no horizon, it flies like a spaceship:
-  whichever way up a maneuver leaves it becomes the new level. Flight speed is adjustable.
+  through an endless tunnel of pipes growing ahead of it. The tunnel mixes tight turns, long sweeping bends,
+  snaking meanders and corkscrews, and its pipes flow with or against the flight. The camera banks like a plane
+  flown by a good (not perfect) pilot, with momentum: it rolls into left and right turns, pulls straight up into
+  climbs, rolls onto its back to pull into dives, and barrel-rolls through corkscrews. With no horizon, it flies
+  like a spaceship: whichever way up a maneuver leaves it becomes the new level. Flight speed is adjustable (and
+  the pilot can vary it), and a flight style slider goes from zen cruising to wild, maneuver after maneuver.
 - **Classic (lite) mode:** for nostalgia, or a slower PC. It renders like the 1990s original: low-poly pipes lit
   per vertex on a black background, no effects. It uses roughly a tenth of the GPU time of the modern style.
 - **Multi-monitor aware:** each monitor gets its own scene, framed for its shape (portrait monitors too), and
@@ -96,7 +98,7 @@ src/Pipes/
     PipeWorld.cs          grid walk rules, bends, fittings, tees, colours, length budget, chunks
     PipeSpace.cs          where pipes may grow: the IPipeSpace interface and the classic box
     TunnelSpace.cs        fly-through's space: box + clear corridor + endless tunnel wall
-    FlightPath.cs         the camera's endless route of straight runs and wide turns
+    FlightPath.cs         the camera's endless route: straights, turns, sweeps, meanders, corkscrews
     Pieces.cs             the drawable pieces the simulation hands to the renderer
   Rendering/
     PipeRenderer.cs       instanced drawing and the chain of effect passes

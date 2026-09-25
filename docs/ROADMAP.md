@@ -47,4 +47,6 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - Pilot feel: overbanks and holds through the corner, leads the roll-out, varies each turn, faint stick wobble
 - Sweeping bends and meanders in the flight path, banked by how sharply they curve
 - Corkscrews: the flight path spirals, and the camera barrel-rolls through it with a sloping lean
+- Flight style slider (zen to wild: straight lengths and maneuver mix), a pilot who varies the speed, and
+  momentum in the gentle curves
 - Frame pacing that sleeps instead of letting the driver spin: CPU from up to a full core down to 7–15%

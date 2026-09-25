@@ -36,6 +36,14 @@ internal sealed class Scene
     /// </summary>
     private const float RollDamping = 0.45f;
 
+    /// <summary>
+    /// The roll spring in gentle curves (sweeps and meanders): a little slower and less damped, so it swings past each
+    /// change of bank the way it does in the tight turns. With the normal spring, a meander's bank changes so gradually
+    /// that the spring hardly trails it, and the weave looked machine-perfect. Much looser than this (4.5, 0.3 was
+    /// tried) and each reversal swung 25–30° past: a pendulum, not a pilot.
+    /// </summary>
+    private const float LooseRollSnap = 5f, LooseRollDamping = 0.4f;
+
     /// <summary>The roll spring is stepped at least this finely, so a slow or hitching frame can't make it unstable.</summary>
     private const float RollStep = 1f / 120f;
 
@@ -51,6 +59,15 @@ internal sealed class Scene
 
     /// <summary>Gentle curves never bank steeper than this.</summary>
     private const float MaxGentleBank = 60f * Degrees;
+
+    /// <summary>When the pilot varies the speed, it stays between these multiples of the flight speed setting.</summary>
+    private const float MinThrottle = 0.6f, MaxThrottle = 1.45f;
+
+    /// <summary>
+    /// How quickly the actual speed follows what the pilot wants: about two-thirds of the way in this many seconds.
+    /// Slow enough that speeding up and slowing down feel like acceleration, not a jump.
+    /// </summary>
+    private const float ThrottleSeconds = 1.5f;
 
     private readonly PipesSettings _settings;
     private readonly Random _rng;
@@ -71,6 +88,9 @@ internal sealed class Scene
     private float _sinceTakeOff;  // seconds since take-off
     private Vector3 _up = Vector3.UnitY;
     private float _rollRate;      // how fast the camera is rolling right now (radians/second): its roll momentum
+    private float _looseness;     // 0 in tight maneuvers, 1 in gentle curves: blends the roll spring between the two
+    private float _rollGap;       // how far the roll was from its target at the end of last frame (radians)
+    private float _speed;         // how fast the camera is flying right now (cells/second)
 
     private enum Phase { FadeIn, Growing, Hold, Flying, FadeOut }
 
@@ -96,6 +116,12 @@ internal sealed class Scene
 
     /// <summary>1 at the default flight speed, bigger when flying faster. Scales things that should keep up with it.</summary>
     private float SpeedFactor => MathF.Max(1f, FlySpeed / 5f);
+
+    /// <summary>
+    /// The fastest the camera ever flies. Things that must keep ahead of it, like how far ahead new pipes spawn, are
+    /// sized for this.
+    /// </summary>
+    private float PeakFlySpeed => _settings.VaryFlightSpeed ? FlySpeed * MaxThrottle : FlySpeed;
 
     public void Start(float aspect)
     {
@@ -189,7 +215,12 @@ internal sealed class Scene
             _sinceTakeOff += dt;
             var t = Math.Clamp(_sinceTakeOff / TakeOffSeconds, 0f, 1f);
             ease = t * t * (3f - 2f * t);
-            _flightS += FlySpeed * ease * dt;
+
+            // The throttle eases towards what the pilot wants (a first-order lag: each second it closes a fixed share
+            // of the gap), so changes of speed feel like acceleration.
+            var wanted = _settings.VaryFlightSpeed ? FlySpeed * Throttle() : FlySpeed;
+            _speed += (wanted - _speed) * (1f - MathF.Exp(-dt / ThrottleSeconds));
+            _flightS += _speed * ease * dt;
         }
 
         var (position, _) = path.Pose(_flightS);
@@ -199,7 +230,10 @@ internal sealed class Scene
         // A hand on the stick is never perfectly still: a slow, faint roll wobble (two unrelated sine waves, so it
         // never visibly repeats) on top of the banking. It goes through the spring with everything else.
         var wobble = ease * Degrees * (1.2f * MathF.Sin(_time * 0.53f + _phases.Z) + 0.8f * MathF.Sin(_time * 0.87f + _phases.W));
-        _up = FollowRoll(Rotate(BankedUp(position, forward), forward, wobble), forward, dt);
+        var (banked, gentle) = BankedUp(position, forward);
+        // Loosen the roll spring in gentle curves, blending over about a second so the change never shows.
+        _looseness += Math.Clamp((gentle ? 1f : 0f) - _looseness, -dt, dt);
+        _up = FollowRoll(Rotate(banked, forward, wobble), forward, dt);
 
         // A gentle bob and sway while flying, well inside the corridor so it never brushes a pipe.
         var side = Vector3.Cross(forward, _up);
@@ -268,41 +302,57 @@ internal sealed class Scene
     /// whichever it was flying before the turn.
     /// </para>
     /// <para>
+    /// <b>Room to roll.</b> With short straights (a wild flight style), neighbouring maneuvers' rolls could overlap and
+    /// fight over the camera. So each maneuver may only use half the straight on either side: its rolls squeeze into
+    /// that, getting quicker, and the next maneuver always starts from exactly where this one left off.
+    /// </para>
+    /// <para>
     /// This is a pure function of the distance flown, not something accumulated frame by frame: each call replays the
     /// maneuvers from the start of the flight (a few dozen at most). So it can't drift, and the same point of the flight
     /// always looks the same. It's the attitude the camera is <i>aiming</i> for: <see cref="FollowRoll"/> then adds
     /// the momentum on top.
     /// </para>
     /// </remarks>
-    private Vector3 BankedUp(Vector3 position, Vector3 forward)
+    /// <returns>The up vector, and whether the camera is in a gentle curve (which loosens the roll spring).</returns>
+    private (Vector3 Up, bool Gentle) BankedUp(Vector3 position, Vector3 forward)
     {
         var s = _flightS;
         var level = Vector3.UnitY; // the attitude on the first straight, facing the box
-        _path!.EnsureLength(s + 20f); // the gentle curves look a little ahead; make sure the path is there
+        // Maneuvers look at their neighbours and a little ahead; make sure the path is built well past here.
+        _path!.EnsureLength(s + 60f);
+        var maneuvers = _path.Maneuvers;
 
-        foreach (var maneuver in _path.Maneuvers)
+        for (var i = 0; i < maneuvers.Count; i++)
         {
+            var maneuver = maneuvers[i];
+            var room = new Room(
+                Before: i > 0 ? (maneuver.StartS - maneuvers[i - 1].EndS) * 0.5f : float.MaxValue,
+                After: i + 1 < maneuvers.Count ? (maneuvers[i + 1].StartS - maneuver.EndS) * 0.5f : float.MaxValue);
+            var gentle = maneuver.Kind is FlightPath.Kind.Sweep or FlightPath.Kind.Meander;
             var (up, after) = maneuver.Kind switch
             {
-                FlightPath.Kind.Turn => TightTurn(maneuver, level, s, position, forward),
+                FlightPath.Kind.Turn => TightTurn(maneuver, level, room, s, position, forward),
                 FlightPath.Kind.Corkscrew => Corkscrew(maneuver, level, s, position, forward),
-                _ => GentleCurve(maneuver, level, s, forward),
+                _ => GentleCurve(maneuver, level, room, s, forward),
             };
-            if (up is { } flying) return flying;     // in the middle of this one
-            if (after is not { } done) break;        // not started yet (and nor has any later one)
-            level = done;                            // already flown: the attitude it left is the new level
+            if (up is { } flying) return (flying, gentle); // in the middle of this one
+            if (after is not { } done) break;              // not started yet (and nor has any later one)
+            level = done;                                  // already flown: the attitude it left is the new level
         }
 
         // On a straight, between maneuvers.
-        return Perpendicular(level, forward);
+        return (Perpendicular(level, forward), false);
     }
+
+    /// <summary>How far a maneuver's rolls may reach before its start and after its end: half of each neighbouring straight.</summary>
+    private readonly record struct Room(float Before, float After);
 
     /// <summary>
     /// One tight turn, flown as described on <see cref="BankedUp"/>. Returns the camera's up if
     /// <paramref name="s"/> is within the turn (roll-in and roll-out included), otherwise the level it leaves the
     /// camera in if it's already over, otherwise neither.
     /// </summary>
-    private (Vector3? Up, Vector3? After) TightTurn(FlightPath.Maneuver turn, Vector3 levelBefore, float s, Vector3 position, Vector3 forward)
+    private (Vector3? Up, Vector3? After) TightTurn(FlightPath.Maneuver turn, Vector3 levelBefore, Room room, float s, Vector3 position, Vector3 forward)
     {
         var levelAfter = LevelAfter(turn, levelBefore);
         // On the approach, the turn's centre lies exactly along turn.To; on the way out, exactly behind (-From).
@@ -311,12 +361,12 @@ internal sealed class Scene
 
         // This turn's pilot quirks. Overbank only happens when there's a roll-in to carry on past.
         var overbank = rollIn == 0f ? 0f : MathF.Sign(rollIn) * float.Lerp(3f, 8f, Quirk(turn.Seed, 1)) * Degrees;
-        var rollInLength = MathF.Min(RollDistance(rollIn, SpeedFactor) * float.Lerp(0.85f, 1.15f, Quirk(turn.Seed, 2)), 8.5f);
+        var rollInLength = Math.Min(MathF.Min(RollDistance(rollIn, SpeedFactor) * float.Lerp(0.85f, 1.15f, Quirk(turn.Seed, 2)), 8.5f), room.Before);
         var lead = float.Lerp(0.25f, 0.45f, Quirk(turn.Seed, 3)) * (turn.EndS - turn.StartS);
 
         var rollInStart = turn.StartS - rollInLength;
         var rollOutStart = turn.EndS - lead;
-        var rollOutEnd = rollOutStart + RollDistance(rollOut, SpeedFactor);
+        var rollOutEnd = MathF.Min(rollOutStart + RollDistance(rollOut, SpeedFactor), turn.EndS + room.After);
 
         if (s < rollInStart) return (null, null);
 
@@ -350,7 +400,7 @@ internal sealed class Scene
     /// <para>
     /// <b>Curvature</b> is how fast the direction of travel changes per unit flown. Averaging it over a stretch of
     /// path is easy: it's just (direction at the far end − direction at the near end) ÷ length. Here the stretch runs
-    /// a few units either side of the camera, which does two nice things: the bank eases in and out instead of
+    /// a couple of units either side of the camera, which does two nice things: the bank eases in and out instead of
     /// jumping when a curve starts, and it starts a moment <i>before</i> the curve, as a pilot anticipates it.
     /// </para>
     /// <para>
@@ -360,16 +410,20 @@ internal sealed class Scene
     /// upwards tips its up over backwards, like the pull of a tight turn.
     /// </para>
     /// </remarks>
-    private (Vector3? Up, Vector3? After) GentleCurve(FlightPath.Maneuver curve, Vector3 levelBefore, float s, Vector3 forward)
+    private (Vector3? Up, Vector3? After) GentleCurve(FlightPath.Maneuver curve, Vector3 levelBefore, Room room, float s, Vector3 forward)
     {
-        var reach = MathF.Min(4f * SpeedFactor, 8f); // how far either side the curvature is averaged
+        // How far either side the curvature is averaged: short enough that the bank changes briskly, which gives the
+        // loose roll spring something to swing past; never more than the room either side.
+        var reach = MathF.Min(MathF.Min(3.5f * SpeedFactor, 7f), MathF.Min(room.Before, room.After));
         if (s < curve.StartS - reach) return (null, null);
         if (s > curve.EndS + reach) return (null, Perpendicular(Carry(levelBefore, curve.From, curve.To), curve.To));
 
         var level = Perpendicular(Carry(levelBefore, curve.From, _path!.Pose(s).Tangent), forward);
         var curvature = (_path.Pose(s + reach).Tangent - _path.Pose(s - reach).Tangent) / (2f * reach);
         var right = Vector3.Cross(forward, level);
-        var bank = Math.Clamp(MathF.Atan(Vector3.Dot(curvature, right) * BankPerCurvature), -MaxGentleBank, MaxGentleBank);
+        // Each curve's pilot banks a little shallower or steeper than the formula (85–120%).
+        var steepness = BankPerCurvature * float.Lerp(0.85f, 1.2f, Quirk(curve.Seed, 1));
+        var bank = Math.Clamp(MathF.Atan(Vector3.Dot(curvature, right) * steepness), -MaxGentleBank, MaxGentleBank);
         return (Rotate(level, forward, bank), null);
     }
 
@@ -467,11 +521,18 @@ internal sealed class Scene
         // How far the roll is from where it's aiming. The spring is stepped on "offset from the target", which the
         // target doesn't change during one frame.
         var toTarget = SignedAngle(up, target, forward);
+        // SignedAngle always answers the shorter way round, between -180° and 180°. Normally the gap is far smaller,
+        // but in a wild flight, quick back-to-back rolls can leave the camera trailing by more than half a turn, and
+        // "the shorter way" would suddenly flip to rolling back the other way. So take whichever equivalent angle
+        // (±360°) is nearest last frame's gap: the roll carries on the way it was going.
+        toTarget += MathF.Round((_rollGap - toTarget) / MathF.Tau) * MathF.Tau;
         var offset = -toTarget;
 
-        // Natural frequency (radians per second) from the time a 90° roll takes at this flight speed.
-        var rollSeconds = RollDistance(MathF.PI * 0.5f, SpeedFactor) / FlySpeed;
-        var omega = RollSnap / rollSeconds;
+        // Natural frequency (radians per second) from the time a 90° roll takes at the current speed. Gentle curves
+        // use a looser spring (see LooseRollSnap).
+        var rollSeconds = RollDistance(MathF.PI * 0.5f, SpeedFactor) / MathF.Max(_speed, 0.5f);
+        var omega = float.Lerp(RollSnap, LooseRollSnap, _looseness) / rollSeconds;
+        var damping = float.Lerp(RollDamping, LooseRollDamping, _looseness);
 
         dt = MathF.Min(dt, 0.1f); // after a long stall, don't try to catch up in one go
         var steps = Math.Max(1, (int)MathF.Ceiling(dt / RollStep));
@@ -479,10 +540,12 @@ internal sealed class Scene
         for (var i = 0; i < steps; i++)
         {
             // Spring pull back towards the target, minus drag on the current roll rate.
-            var accel = -omega * omega * offset - 2f * RollDamping * omega * _rollRate;
+            var accel = -omega * omega * offset - 2f * damping * omega * _rollRate;
             _rollRate += accel * h;
             offset += _rollRate * h;
         }
+
+        _rollGap = -offset;
 
         // Roll by however far the offset moved this frame.
         return Rotate(up, forward, offset + toTarget);
@@ -505,8 +568,8 @@ internal sealed class Scene
     /// <summary>
     /// How far along the path a roll takes: longer for bigger rolls, so a 180° roll is quicker per degree but still
     /// smooth. Faster flights stretch it out a little (<paramref name="speedFactor"/>), so a roll doesn't become a
-    /// snap. Capped at 8.5 units each side of a turn: straights are at least 18 long, so neighbouring turns' rolls
-    /// never overlap.
+    /// snap. Capped at 8.5 units each side of a turn, and in any case (see <see cref="BankedUp"/>) at half the straight
+    /// next to it, so neighbouring maneuvers' rolls never overlap.
     /// </summary>
     private static float RollDistance(float angle, float speedFactor) =>
         MathF.Min((5f + 3f * MathF.Abs(angle) / MathF.PI) * speedFactor, 8.5f);
@@ -532,6 +595,45 @@ internal sealed class Scene
     /// <summary><paramref name="v"/> with any part along <paramref name="forward"/> removed, as a unit vector.</summary>
     private static Vector3 Perpendicular(Vector3 v, Vector3 forward) =>
         Vector3.Normalize(v - forward * Vector3.Dot(v, forward));
+
+    /// <summary>
+    /// How fast the pilot wants to fly right now, as a multiple of the flight speed setting.
+    /// </summary>
+    /// <remarks>
+    /// Three things, multiplied together:
+    /// <list type="bullet">
+    /// <item><b>Drift:</b> two slow sine waves at unrelated speeds, up to about ±30% over a minute or so. Nobody holds
+    /// a throttle perfectly still.</item>
+    /// <item><b>Caution:</b> easing off to 85% coming up to a tight turn, holding that through it, and picking up again
+    /// over the next 10 units.</item>
+    /// <item><b>Open road:</b> with 25–50+ units of clear straight ahead, opening up by as much as 20%.</item>
+    /// </list>
+    /// </remarks>
+    private float Throttle()
+    {
+        var s = _flightS;
+        var drift = 0.18f * MathF.Sin(_time * 0.071f + _phases.X * 2f) + 0.12f * MathF.Sin(_time * 0.163f + _phases.W * 3f);
+
+        var brakingDistance = 12f * SpeedFactor;
+        var caution = 0f;
+        var clearAhead = float.MaxValue;
+        foreach (var m in _path!.Maneuvers)
+        {
+            if (m.EndS + 10f < s) continue;  // long gone
+            if (m.StartS > s + 60f) break;   // this one and every later one are too far ahead to matter yet
+            clearAhead = MathF.Min(clearAhead, MathF.Max(m.StartS - s, 0f));
+            if (m.Kind == FlightPath.Kind.Turn)
+            {
+                var wary = s < m.StartS ? Ease(1f - (m.StartS - s) / brakingDistance)
+                    : s <= m.EndS ? 1f
+                    : Ease(1f - (s - m.EndS) / 10f);
+                caution = MathF.Max(caution, wary);
+            }
+        }
+        var openRoad = Ease((clearAhead - 25f) / 25f);
+
+        return Math.Clamp((1f + drift) * (1f - 0.15f * caution) * (1f + 0.2f * openRoad), MinThrottle, MaxThrottle);
+    }
 
     /// <summary>
     /// A repeatable "random" number between 0 and 1 from a turn's seed, a different one for each <paramref name="k"/>.
@@ -570,7 +672,9 @@ internal sealed class Scene
     private int FlightConcurrency()
     {
         var ringArea = MathF.PI * (TunnelSpace.OuterRadius * TunnelSpace.OuterRadius - TunnelSpace.InnerRadius * TunnelSpace.InnerRadius);
-        var needed = 0.6f * ringArea * FlySpeed / _settings.Speed;
+        // With a varying speed, size for halfway between the setting and the peak: fuller while slow, a little
+        // sparser at full tilt.
+        var needed = 0.6f * ringArea * float.Lerp(FlySpeed, PeakFlySpeed, 0.5f) / _settings.Speed;
         return Math.Max(_settings.ConcurrentPipes, Math.Min((int)MathF.Ceiling(needed), 80));
     }
 
@@ -611,14 +715,18 @@ internal sealed class Scene
             // The camera starts straight in front of the box, and the path runs from there through the box's middle
             // and out the far side before its first turn. The tunnel space keeps a corridor clear along it.
             var start = _box.Center + new Vector3(0f, 0f, _distance);
-            _path = new FlightPath(start, new Int3(0, 0, -1), firstRun: _distance + depth * 0.5f + 14f, _rng);
+            _path = new FlightPath(start, new Int3(0, 0, -1), firstRun: _distance + depth * 0.5f + 14f,
+                FlightPath.Style.ForLevel(_settings.FlightStyle), _rng);
             // Spawn far enough ahead that pipes get about 2.5 seconds to grow before the camera arrives.
-            _tunnel = new TunnelSpace(_path, _box) { SpawnAhead = MathF.Max(14f, FlySpeed * 2.5f) };
+            _tunnel = new TunnelSpace(_path, _box) { SpawnAhead = MathF.Max(14f, PeakFlySpeed * 2.5f) };
             _world = new PipeWorld(_tunnel, _settings, _rng);
             _flightS = 0f;
             _sinceTakeOff = 0f;
             _up = Vector3.UnitY;
             _rollRate = 0f;
+            _looseness = 0f;
+            _rollGap = 0f;
+            _speed = FlySpeed;
         }
         else
         {

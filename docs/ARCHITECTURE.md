@@ -154,16 +154,29 @@ owns camera motion:
 In this mode the scene builds as usual, then the camera takes off, dives into the pipes, and flies on through a
 tunnel that keeps building itself ahead. Three pieces make it work.
 
-**The flight path** (`Simulation/FlightPath.cs`): straight runs along grid axes (18–40 units), joined by
-*maneuvers*. It's generated on demand, ahead of the camera, and stored as points every 0.5 units, so "distance
-along the path" is just an index. The maneuvers, all built from circular arcs:
+**The flight path** (`Simulation/FlightPath.cs`): straight runs along grid axes, joined by *maneuvers*. It's
+generated on demand, ahead of the camera, and stored as points every 0.5 units, so "distance along the path" is
+just an index. The maneuvers:
 
-| Maneuver | Shape | How often |
-|---|---|---|
-| Turn | quarter circle, radius 8, into a new direction | 50% |
-| Sweep | quarter circle, radius 22–30: a long, lazy curve into a new direction | 22% |
-| Meander | shallow arcs (radius 18–26) swinging 20–30° side to side, 2–4 times, then straightening up the same way | 18% |
-| Corkscrew | a spiral round the direction of travel: radius 3.5–5, one coil every 32–40 units, 1–2 coils | 10% |
+| Maneuver | Shape |
+|---|---|
+| Turn | quarter circle, radius 8, into a new direction |
+| Sweep | quarter circle, radius 22–30: a long, lazy curve into a new direction |
+| Meander | shallow arcs (radius 18–26) swinging 20–30° side to side, 2–4 times, then straightening up the same way |
+| Corkscrew | a spiral round the direction of travel: radius 3.5–5, one coil every 32–40 units, 1–2 coils |
+
+How long the straights are, and how often each maneuver comes up, is the **flight style** setting
+(`FlightPath.Style`), a slider from 1 (zen) to 10 (wild). Three anchor styles, with the slider blending between
+them in straight lines (1→5, then 5→10):
+
+| | Straights | Turn | Sweep | Meander | Corkscrew |
+|---|---|---|---|---|---|
+| 1, Zen | 45–90 | 15% | 40% | 40% | 5% |
+| 5, Balanced (default) | 18–40 | 50% | 22% | 18% | 10% |
+| 10, Wild | 3–10 | 50% | 10% | 15% | 25% |
+
+Level 5 picks its random numbers exactly as the code did before the setting existed, so the default flight didn't
+change.
 
 A meander's swings are `+θ, −2θ, +2θ, …, ±θ`: they add up to no turn, so it comes out heading exactly the way it
 went in.
@@ -262,6 +275,14 @@ Two properties matter:
   Measured: sideways sweeps hold 36–44° through the curve; meanders weave between about +50° and −50°, like flying
   down a snake; vertical sweeps don't roll.
 
+  **Gentle curves get a looser spring.** With the normal roll spring (below), a meander's bank changes so gradually
+  that the spring hardly trails it, and the weave looked machine-perfect. So in sweeps and meanders the spring is
+  softer and less damped (`LooseRollSnap`, `LooseRollDamping`), blended in and out over about a second, and the
+  curvature is averaged over a shorter stretch (3.5 units either side), so the bank changes briskly enough to build
+  up some momentum. Each curve's pilot also banks 85–120% as steeply as the formula says. Measured: the roll trails
+  by up to about 28° while a meander reverses, then swings 8–10° past the new bank before settling. An even looser
+  spring was tried first and swung 25–30° past on every reversal: a pendulum, not a pilot.
+
   **Corkscrews are a slow barrel roll** (`Scene.Corkscrew`). The centre of a spiral's curve always lies towards its
   axis, so the tight-turn rule applies: up faces the axis. As the path winds round, that means rolling steadily, one
   full roll per coil, with the tunnel ahead always curving the same way on screen while the pipes spin round you.
@@ -273,6 +294,11 @@ Two properties matter:
     closes, which is level again. Both blends take the shorter way round, so neither is more than half a turn.
   - Measured: once the spiral is open, the attitude holds steady relative to the axis (lean plus 5–8° of spring
     lag, since the spring always trails a steady roll slightly), and it comes out within 2° of level.
+
+  **Room to roll.** With a wild flight style, straights can be as short as 3 units, and neighbouring maneuvers'
+  rolls would overlap and fight over the camera. So each maneuver may only reach half the straight on either side
+  (`Scene.Room`): a tight turn's roll-in and roll-out squeeze into it (getting quicker), and so does a gentle
+  curve's averaging stretch. Then the next maneuver always starts from exactly the attitude the last one left.
 
   Two implementation notes worth copying elsewhere:
   - The *target* up vector is a **pure function of how far along the path** the camera is, not something updated a
@@ -303,6 +329,11 @@ Two properties matter:
   - **Stepping:** semi-implicit Euler (update the rate from the acceleration, then the angle from the new rate) in
     fixed steps of at most 1/120 s. Plain Euler can gain energy and blow up; this version stays stable and gives
     the same motion at any refresh rate. The whole thing is a few multiplies per frame, so it costs nothing.
+  - **Never the wrong way round.** The gap to the target is measured with a signed angle, which always answers
+    the shorter way round (±180°). In a wild flight, quick back-to-back rolls can leave the camera trailing by up to
+    about 75°, and if that ever passed 180°, "the shorter way" would flip and the camera would suddenly roll back the
+    other way. So each frame takes whichever equivalent angle (±360°) is nearest last frame's gap, and the roll
+    carries on the way it was going.
 - **Recycling:** every frame, chunks whose centre is more than 14 units behind the camera are dropped with
   `PipeWorld.Recycle`, including their geometry, their occupied cells, and any pipe still growing there. Memory and
   drawing cost stay flat: a two-minute flight held steady at about 115 MB.
@@ -311,11 +342,25 @@ Two properties matter:
   looked like a solid wall, and emptier looked bare. Slow growth speeds get more pipes to compensate.
 - **Flight speed** is a setting (1–20 cells/s, default 5). A few things scale with it so a fast flight still looks
   right:
-  - **Pipe count:** more pipes grow at once (above).
-  - **Spawn distance:** new pipes start further ahead, about 2.5 seconds of flight, so they've had time to grow
-    before the camera arrives.
+  - **Pipe count:** more pipes grow at once (above). With a varying speed (below), it's sized for halfway between
+    the setting and the peak.
+  - **Spawn distance:** new pipes start further ahead, about 2.5 seconds of flight at the *peak* speed, so they've
+    had time to grow before the camera arrives.
   - **Fog and far plane:** pushed back to match, so the further-away spawning isn't hidden and doesn't pop in.
   - **Rolls:** stretched slightly, so they don't become a snap.
+- **The pilot varies the speed** (a setting, on by default; `Scene.Throttle`). What the pilot wants is three things
+  multiplied together:
+  - **Drift:** two slow sine waves at unrelated speeds, about ±30% over a minute or so.
+  - **Caution:** easing off to 85% coming up to a tight turn (starting 12 units before), holding it through the
+    turn, and picking up over the next 10 units.
+  - **Open road:** with 25 to 50+ units of clear straight ahead, opening up by as much as 20%.
+
+  The result is kept between 60% and 145% of the setting, and the actual speed follows it through a *first-order
+  lag*, `speed += (wanted − speed) × (1 − e^(−dt / 1.5 s))`: each moment it closes a fixed share of the gap, which
+  feels like accelerating rather than jumping. Measured: at a setting of 5 it ranges 3.6–6.9 and averages 4.9–5.2
+  (4.6–5.1 in the wild style, where there are more turns to be careful about). The *banking* still uses the speed
+  setting, not the current speed, so a roll's shape along the path never changes mid-roll; only the spring's
+  timing uses the current speed.
 
 ## Simulation: how pipes grow
 

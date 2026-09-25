@@ -14,6 +14,9 @@ internal sealed class ConfigForm : Form
     private readonly ComboBox _camera = Dropdown("Still", "Slow orbit", "Floating drift", "Fly through the pipes");
     private readonly TrackBar _flightSpeed = new() { Minimum = 1, Maximum = PipesSettings.MaxFlightSpeed, TickFrequency = 2, Width = 220 };
     private readonly Label _flightSpeedValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly TrackBar _flightStyle = new() { Minimum = 1, Maximum = PipesSettings.MaxFlightStyle, TickFrequency = 1, Width = 220 };
+    private readonly Label _flightStyleValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly CheckBox _varySpeed = Check("Pilot varies the speed");
     private readonly CheckBox _separateMonitors = Check("Own scene on each monitor");
 
     private readonly ComboBox _joints = Dropdown("Classic (ball joints)", "Smooth elbows", "Mixed");
@@ -47,6 +50,10 @@ internal sealed class ConfigForm : Form
         var flightSpeedRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
         flightSpeedRow.Controls.AddRange([_flightSpeed, _flightSpeedValue]);
 
+        _flightStyle.ValueChanged += (_, _) => _flightStyleValue.Text = StyleName(_flightStyle.Value);
+        var flightStyleRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
+        flightStyleRow.Controls.AddRange([_flightStyle, _flightStyleValue]);
+
         var grid = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill };
         void Row(string label, Control c)
         {
@@ -66,6 +73,8 @@ internal sealed class ConfigForm : Form
         Row("Growth speed", speedRow);
         Row("Camera", _camera);
         Row("Flight speed", flightSpeedRow);
+        Row("", _varySpeed);
+        Row("Flight style", flightStyleRow);
         Row("", _separateMonitors);
 
         Heading("Pipes");
@@ -128,9 +137,20 @@ internal sealed class ConfigForm : Form
         _teapots.Checked = true; // the original had them too
     }
 
-    /// <summary>Flight speed only matters when flying through the pipes.</summary>
+    /// <summary>The flight settings only matter when flying through the pipes.</summary>
     private void UpdateFlightSpeedToggle() =>
-        _flightSpeed.Enabled = _flightSpeedValue.Enabled = _camera.SelectedIndex == (int)CameraMotion.FlyThrough;
+        _flightSpeed.Enabled = _flightSpeedValue.Enabled = _varySpeed.Enabled = _flightStyle.Enabled = _flightStyleValue.Enabled =
+            _camera.SelectedIndex == (int)CameraMotion.FlyThrough;
+
+    /// <summary>A word for each stretch of the flight style slider, from calm to hectic.</summary>
+    private static string StyleName(int level) => level switch
+    {
+        <= 2 => "Zen",
+        <= 4 => "Relaxed",
+        <= 6 => "Balanced",
+        <= 8 => "Lively",
+        _ => "Wild",
+    };
 
     /// <summary>The effects only exist in the modern style.</summary>
     private void UpdateEffectToggles()
@@ -193,6 +213,9 @@ internal sealed class ConfigForm : Form
         _camera.SelectedIndex = (int)s.Camera;
         _flightSpeed.Value = (int)Math.Round(s.FlightSpeed);
         _flightSpeedValue.Text = $"{_flightSpeed.Value} cells/s";
+        _varySpeed.Checked = s.VaryFlightSpeed;
+        _flightStyle.Value = s.FlightStyle;
+        _flightStyleValue.Text = StyleName(s.FlightStyle);
         UpdateFlightSpeedToggle();
         _separateMonitors.Checked = s.SeparateMonitors;
         _joints.SelectedIndex = (int)s.Joints;
@@ -215,6 +238,8 @@ internal sealed class ConfigForm : Form
         _settings.Speed = _speed.Value;
         _settings.Camera = (CameraMotion)_camera.SelectedIndex;
         _settings.FlightSpeed = _flightSpeed.Value;
+        _settings.VaryFlightSpeed = _varySpeed.Checked;
+        _settings.FlightStyle = _flightStyle.Value;
         _settings.SeparateMonitors = _separateMonitors.Checked;
         _settings.Joints = (JointStyle)_joints.SelectedIndex;
         _settings.Finish = (Finish)_finish.SelectedIndex;

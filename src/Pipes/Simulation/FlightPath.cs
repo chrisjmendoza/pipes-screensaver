@@ -77,9 +77,34 @@ public sealed class FlightPath
     /// <summary>Radius of the turns. Wide enough that a turn feels like banking, not snapping round a corner.</summary>
     private const float TurnRadius = 8f;
 
-    /// <summary>How often each maneuver comes up: mostly classic turns, with the gentler ones mixed in, and the
-    /// occasional corkscrew as a treat.</summary>
-    private const float TurnChance = 0.5f, SweepChance = 0.22f, MeanderChance = 0.18f; // corkscrews get the rest
+    /// <summary>
+    /// How busy the layout is, from the "Flight style" setting: how long the straights between maneuvers are, and
+    /// how often each kind of maneuver comes up (<see cref="Turn"/>, <see cref="Sweep"/> and <see cref="Meander"/> are
+    /// chances out of 1; corkscrews get whatever's left).
+    /// </summary>
+    public readonly record struct Style(float MinStraight, float MaxStraight, float Turn, float Sweep, float Meander)
+    {
+        /// <summary>Long cruises and lazy curves, the odd turn, hardly any corkscrews.</summary>
+        private static readonly Style Zen = new(45f, 90f, 0.15f, 0.40f, 0.40f);
+
+        /// <summary>The original mix: mostly tight turns, gentler curves mixed in, the occasional corkscrew.</summary>
+        private static readonly Style Balanced = new(18f, 40f, 0.50f, 0.22f, 0.18f);
+
+        /// <summary>Straight from one maneuver into the next, and a corkscrew one time in four.</summary>
+        private static readonly Style Wild = new(3f, 10f, 0.50f, 0.10f, 0.15f);
+
+        /// <summary>
+        /// The style for a slider position from 1 to 10. Level 5 is <see cref="Balanced"/>; below it blends towards
+        /// <see cref="Zen"/> (at 1), above it towards <see cref="Wild"/> (at 10).
+        /// </summary>
+        public static Style ForLevel(int level) => level <= 5
+            ? Blend(Zen, Balanced, (level - 1) / 4f)
+            : Blend(Balanced, Wild, (level - 5) / 5f);
+
+        private static Style Blend(Style a, Style b, float t) => new(
+            float.Lerp(a.MinStraight, b.MinStraight, t), float.Lerp(a.MaxStraight, b.MaxStraight, t),
+            float.Lerp(a.Turn, b.Turn, t), float.Lerp(a.Sweep, b.Sweep, t), float.Lerp(a.Meander, b.Meander, t));
+    }
 
     /// <summary>Turns up or down are rarer than left or right, which feels more natural.</summary>
     private const float VerticalTurnWeight = 0.35f;
@@ -88,6 +113,7 @@ public sealed class FlightPath
     private const int BucketSize = 8;
 
     private readonly Random _rng;
+    private readonly Style _style;
     private readonly List<Vector3> _points = [];
     private readonly List<Vector3> _tangents = [];
     private readonly List<int> _flow = [];
@@ -98,9 +124,10 @@ public sealed class FlightPath
     private int _currentFlow;
 
     /// <param name="firstRun">Length of the first straight, before the first turn.</param>
-    public FlightPath(Vector3 start, Int3 direction, float firstRun, Random rng)
+    public FlightPath(Vector3 start, Int3 direction, float firstRun, Style style, Random rng)
     {
         _rng = rng;
+        _style = style;
         _direction = direction;
         _usedDirections.Add(direction);
         _currentFlow = NextFlow();
@@ -131,7 +158,7 @@ public sealed class FlightPath
         while (Length < s)
         {
             AddManeuver();
-            AddStraight(18f + _rng.NextSingle() * 22f);
+            AddStraight(float.Lerp(_style.MinStraight, _style.MaxStraight, _rng.NextSingle()));
         }
     }
 
@@ -172,9 +199,9 @@ public sealed class FlightPath
     private void AddManeuver()
     {
         var roll = _rng.NextSingle();
-        if (roll < TurnChance) AddQuarter(Kind.Turn, TurnRadius);
-        else if (roll < TurnChance + SweepChance) AddQuarter(Kind.Sweep, float.Lerp(22f, 30f, _rng.NextSingle()));
-        else if (roll < TurnChance + SweepChance + MeanderChance) AddMeander();
+        if (roll < _style.Turn) AddQuarter(Kind.Turn, TurnRadius);
+        else if (roll < _style.Turn + _style.Sweep) AddQuarter(Kind.Sweep, float.Lerp(22f, 30f, _rng.NextSingle()));
+        else if (roll < _style.Turn + _style.Sweep + _style.Meander) AddMeander();
         else AddCorkscrew();
     }
 
