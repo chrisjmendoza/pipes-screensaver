@@ -28,6 +28,13 @@ internal sealed unsafe class GLHost : IDisposable
     private const string ClassName = "PipesScreensaverWindow";
     private const int MouseMoveTolerance = 6;
 
+    // The window (and small/taskbar) icon, pulled back out of this exe rather than embedded a second time as a
+    // resource -- the build already put it there via <ApplicationIcon> in the csproj. Kept alive for the whole
+    // process: RegisterClassEx only copies the HICON value, it doesn't take ownership, so disposing these would
+    // leave the window class pointing at a destroyed icon.
+    private static readonly Icon? WindowIcon = Environment.ProcessPath is { } exePath ? Icon.ExtractAssociatedIcon(exePath) : null;
+    private static readonly Icon? WindowIconSmall = WindowIcon is { } icon ? new Icon(icon, SystemInformation.SmallIconSize) : null;
+
     private readonly HostMode _mode;
     private readonly IntPtr _parent;
     private readonly Win32.WndProc _wndProc; // keep alive: native code holds a pointer to it
@@ -272,6 +279,8 @@ internal sealed unsafe class GLHost : IDisposable
             style = Win32.CS_OWNDC | Win32.CS_HREDRAW | Win32.CS_VREDRAW,
             lpfnWndProc = Marshal.GetFunctionPointerForDelegate(_wndProc),
             hInstance = instance,
+            hIcon = WindowIcon?.Handle ?? IntPtr.Zero,
+            hIconSm = WindowIconSmall?.Handle ?? IntPtr.Zero,
             hCursor = Win32.LoadCursor(IntPtr.Zero, new IntPtr(Win32.IDC_ARROW)),
             lpszClassName = ClassName,
         };

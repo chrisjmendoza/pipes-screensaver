@@ -4,3 +4,4 @@ publish/
 .vs/
 *.user
 .claude/worktrees/
+scripts/_icon_preview/

@@ -10,6 +10,10 @@
     <AssemblyName>Pipes</AssemblyName>
     <!-- Per-monitor DPI awareness is also set in code before any GL window exists (see Program.Main). -->
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- Gives the built exe/scr its icon in Explorer, the taskbar, and shortcuts. At runtime the GL window and the
+         settings dialog both pull the same icon back out of the exe (see GLHost.CreateWindow and ConfigForm's
+         constructor) rather than embedding it a second time. Regenerate with scripts/make_icon.py. -->
+    <ApplicationIcon>Pipes.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

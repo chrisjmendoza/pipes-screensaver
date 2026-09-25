@@ -46,6 +46,10 @@ internal sealed class ConfigForm : Form
     {
         _settings = settings;
         Text = "Pipes Settings";
+        // Reuses the icon the build already embedded in the exe (<ApplicationIcon> in the csproj) instead of
+        // embedding a second copy as a resource. ProcessPath is only null in exotic hosting scenarios that don't
+        // apply to a WinExe like this one; the fallback just leaves the default WinForms icon.
+        if (Environment.ProcessPath is { } exePath) Icon = Icon.ExtractAssociatedIcon(exePath);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
