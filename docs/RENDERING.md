@@ -189,8 +189,13 @@ effect on direct light made the contact shadows read.
 ## Depth of field
 
 A camera lens is only sharp at one distance. Something at depth `z` is blurred by an amount proportional to
-`|1/focus − 1/z|` (the thin-lens model). The scene tells `Camera.LookAt` where to focus: on the middle of the grid
-(with the grid's front face fully blurred), or, when flying through the tunnel, about 10 units ahead.
+`|1/focus − 1/z|` (the thin-lens model). The scene tells `Camera.LookAt` where to focus: on the middle of the grid,
+with the grid's front face fully blurred.
+
+**Not in flight.** Flying through the tunnel it used to focus about 10 units ahead, and that blurred most of the
+screen: the tunnel walls are always right beside the camera, and the thin-lens formula blurs near things hardest
+(`1/z` is big when `z` is small). No focus distance fixes that, so the blur fades out over the take-off
+(`lensBlur` in `LookAt`), and at zero the renderer skips the pass altogether.
 
 `DofFragment` gathers samples along a **golden-angle spiral** (each sample is rotated 137.5° from the last, which
 covers a disc evenly with no pattern). It's based on Dennis Gustafsson's single-pass bokeh DoF:

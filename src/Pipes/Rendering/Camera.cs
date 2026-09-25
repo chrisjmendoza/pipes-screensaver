@@ -42,7 +42,9 @@ internal sealed class Camera
     /// <param name="far">Nothing farther than this is drawn.</param>
     /// <param name="fogReference">Distance the fog is scaled to: bigger means thinner fog.</param>
     /// <param name="depthOfFocus">Roughly how far in front of the focus plane something is fully blurred.</param>
-    public void LookAt(Vector3 eye, Vector3 target, Vector3 up, float aspect, float verticalFov, float far, float fogReference, float depthOfFocus)
+    /// <param name="lensBlur">How much depth-of-field blur to use, 0 (none, and the pass is skipped) to 1 (full).</param>
+    public void LookAt(Vector3 eye, Vector3 target, Vector3 up, float aspect, float verticalFov, float far, float fogReference, float depthOfFocus,
+        float lensBlur = 1f)
     {
         Position = eye;
         View = Matrix4x4.CreateLookAt(eye, target, up);
@@ -55,6 +57,6 @@ internal sealed class Camera
         // depthOfFocus in front of the focus plane is at full blur.
         FocusDistance = distance;
         var nearSharp = MathF.Max(distance - depthOfFocus, 0.5f);
-        FocusScale = 1f / MathF.Abs(1f / distance - 1f / nearSharp);
+        FocusScale = lensBlur / MathF.Abs(1f / distance - 1f / nearSharp);
     }
 }

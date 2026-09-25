@@ -32,7 +32,7 @@ internal sealed class ConfigForm : Form
     private readonly CheckBox _shadows = Check("Shadows (pipes shade the pipes behind them)");
     private readonly CheckBox _ao = Check("Ambient occlusion (soft contact shadows)");
     private readonly CheckBox _bloom = Check("Bloom (glow on highlights)");
-    private readonly CheckBox _dof = Check("Depth of field (blur near and far pipes)");
+    private readonly CheckBox _dof = Check("Depth of field (blur near and far pipes; off in flight)");
 
     private readonly GroupBox _flightGroup;
 
@@ -91,6 +91,9 @@ internal sealed class ConfigForm : Form
         var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, AutoSize = true };
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
         var preview = new Button { Text = "Try it (windowed)", AutoSize = true };
+        // Puts the defaults into the dialog. Like any other change, nothing is saved until OK (or Try it).
+        var defaults = new Button { Text = "Reset to defaults", AutoSize = true };
+        defaults.Click += (_, _) => LoadFrom(new PipesSettings());
         preview.Click += (_, _) =>
         {
             Apply();
@@ -105,12 +108,19 @@ internal sealed class ConfigForm : Form
         AcceptButton = ok;
         CancelButton = cancel;
 
-        var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Dock = DockStyle.Bottom };
+        var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Dock = DockStyle.Fill };
         buttons.Controls.AddRange([cancel, ok, preview]);
+        // Reset sits on its own at the left, apart from the buttons that close the dialog.
+        var buttonRow = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Bottom };
+        buttonRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        buttonRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        defaults.Margin = new Padding(9, 3, 3, 3);
+        buttonRow.Controls.Add(defaults, 0, 0);
+        buttonRow.Controls.Add(buttons, 1, 0);
 
         var layout = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Fill };
         layout.Controls.Add(columns);
-        layout.Controls.Add(buttons);
+        layout.Controls.Add(buttonRow);
         Controls.Add(layout);
 
         LoadFrom(settings);
