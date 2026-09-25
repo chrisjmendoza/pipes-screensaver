@@ -246,7 +246,10 @@ internal sealed class Scene
         Camera.LookAt(eye, eye + forward * focus, _up, _aspect, VerticalFov,
             far: float.Lerp(_distance * 4f, tunnel.SpawnAheadMax + 28f, ease),
             fogReference: float.Lerp(_distance, 26f * SpeedFactor, ease),
-            depthOfFocus: float.Lerp(_depth * 0.5f + 1f, 6f, ease));
+            depthOfFocus: float.Lerp(_depth * 0.5f + 1f, 6f, ease),
+            // No depth of field in flight: a lens can only be sharp at one distance, and the tunnel walls are right
+            // beside the camera, so any focus blurred most of the screen. It fades out over the take-off.
+            lensBlur: 1f - ease);
 
         // Shadows cover the whole box before take-off, then a region reaching ahead of the camera: from a little
         // behind it to about 38 units ahead, where the fog is thickening anyway.

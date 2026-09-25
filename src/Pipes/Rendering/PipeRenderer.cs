@@ -232,7 +232,7 @@ internal sealed unsafe class PipeRenderer : IDisposable
         Blit(_sceneFbo, _resolveFbo);
 
         var image = _resolveTex;
-        if (_options.DepthOfField)
+        if (_options.DepthOfField && camera.FocusScale > 0f) // 0: the camera wants no blur right now (in flight)
         {
             DepthOfFieldPass(camera, image);
             image = _dofTex;
