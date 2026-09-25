@@ -9,12 +9,12 @@ internal sealed class ConfigForm : Form
 
     private readonly NumericUpDown _concurrent = new() { Minimum = 1, Maximum = PipesSettings.MaxConcurrentPipes, Width = 70 };
     private readonly NumericUpDown _perScene = new() { Minimum = 1, Maximum = PipesSettings.MaxPipesPerScene, Width = 70 };
-    private readonly TrackBar _speed = new() { Minimum = 1, Maximum = PipesSettings.MaxSpeed, TickFrequency = 10, Width = 220 };
+    private readonly TrackBar _speed = Slider(1, PipesSettings.MaxSpeed);
     private readonly Label _speedValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly ComboBox _camera = Dropdown("Still", "Slow orbit", "Floating drift", "Fly through the pipes");
-    private readonly TrackBar _flightSpeed = new() { Minimum = 1, Maximum = PipesSettings.MaxFlightSpeed, TickFrequency = 2, Width = 220 };
+    private readonly TrackBar _flightSpeed = Slider(1, PipesSettings.MaxFlightSpeed);
     private readonly Label _flightSpeedValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly TrackBar _flightStyle = new() { Minimum = 1, Maximum = PipesSettings.MaxFlightStyle, TickFrequency = 1, Width = 220 };
+    private readonly TrackBar _flightStyle = Slider(1, PipesSettings.MaxFlightStyle);
     private readonly Label _flightStyleValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox _varySpeed = Check("Pilot varies the speed");
     private readonly CheckBox _separateMonitors = Check("Own scene on each monitor");
@@ -27,9 +27,16 @@ internal sealed class ConfigForm : Form
 
     private readonly ComboBox _style = Dropdown("Modern", "Classic (lite, like the original)");
     private readonly ComboBox _aa = Dropdown("Off", "2x", "4x", "8x");
+    private readonly CheckBox _shadows = Check("Shadows (pipes shade the pipes behind them)");
     private readonly CheckBox _ao = Check("Ambient occlusion (soft contact shadows)");
     private readonly CheckBox _bloom = Check("Bloom (glow on highlights)");
     private readonly CheckBox _dof = Check("Depth of field (blur near and far pipes)");
+
+    private readonly GroupBox _flightGroup;
+
+    // Each column's groups and row labels, so OnLoad can line them up (see AlignColumns).
+    private readonly List<GroupBox> _leftGroups = [], _rightGroups = [];
+    private readonly List<Label> _leftLabels = [], _rightLabels = [];
 
     public ConfigForm(PipesSettings settings)
     {
@@ -43,53 +50,39 @@ internal sealed class ConfigForm : Form
         Padding = new Padding(12);
 
         _speed.ValueChanged += (_, _) => _speedValue.Text = $"{_speed.Value} cells/s";
-        var speedRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
-        speedRow.Controls.AddRange([_speed, _speedValue]);
-
         _flightSpeed.ValueChanged += (_, _) => _flightSpeedValue.Text = $"{_flightSpeed.Value} cells/s";
-        var flightSpeedRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
-        flightSpeedRow.Controls.AddRange([_flightSpeed, _flightSpeedValue]);
-
         _flightStyle.ValueChanged += (_, _) => _flightStyleValue.Text = StyleName(_flightStyle.Value);
-        var flightStyleRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
-        flightStyleRow.Controls.AddRange([_flightStyle, _flightStyleValue]);
 
-        var grid = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill };
-        void Row(string label, Control c)
-        {
-            grid.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 8, 12, 3) });
-            grid.Controls.Add(c);
-        }
-        void Heading(string text)
-        {
-            var heading = new Label { Text = text, AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(0, 12, 0, 2) };
-            grid.Controls.Add(heading);
-            grid.SetColumnSpan(heading, 2);
-        }
+        // Two columns of labelled groups, so it reads at a glance instead of as one long list:
+        //   Animation | Pipes
+        //   Flight    | Graphics
+        var animation = Group("Animation", _leftGroups, _leftLabels,
+            ("Pipes at once", _concurrent),
+            ("Pipes per scene", _perScene),
+            ("Growth speed", WithValue(_speed, _speedValue)),
+            ("Camera", _camera),
+            ("", _separateMonitors));
+        _flightGroup = Group("Flight (fly-through camera)", _leftGroups, _leftLabels,
+            ("Flight speed", WithValue(_flightSpeed, _flightSpeedValue)),
+            ("", _varySpeed),
+            ("Flight style", WithValue(_flightStyle, _flightStyleValue)));
+        var pipes = Group("Pipes", _rightGroups, _rightLabels,
+            ("Joints", _joints),
+            ("Finish", _finish),
+            ("", _thickness),
+            ("", _fittings),
+            ("", _teapots));
+        var graphics = Group("Graphics", _rightGroups, _rightLabels,
+            ("Style", _style),
+            ("Anti-aliasing", _aa),
+            ("", _shadows),
+            ("", _ao),
+            ("", _bloom),
+            ("", _dof));
 
-        Heading("Animation");
-        Row("Pipes at once", _concurrent);
-        Row("Pipes per scene", _perScene);
-        Row("Growth speed", speedRow);
-        Row("Camera", _camera);
-        Row("Flight speed", flightSpeedRow);
-        Row("", _varySpeed);
-        Row("Flight style", flightStyleRow);
-        Row("", _separateMonitors);
-
-        Heading("Pipes");
-        Row("Joints", _joints);
-        Row("Finish", _finish);
-        Row("", _thickness);
-        Row("", _fittings);
-        Row("", _teapots);
-
-        Heading("Graphics");
-        Row("Style", _style);
-        Row("Anti-aliasing", _aa);
-        Row("", _ao);
-        Row("", _bloom);
-        Row("", _dof);
+        var columns = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill };
+        columns.Controls.Add(Column(animation, _flightGroup), 0, 0);
+        columns.Controls.Add(Column(pipes, graphics), 1, 0);
 
         var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, AutoSize = true };
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
@@ -108,7 +101,7 @@ internal sealed class ConfigForm : Form
         buttons.Controls.AddRange([cancel, ok, preview]);
 
         var layout = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Fill };
-        layout.Controls.Add(grid);
+        layout.Controls.Add(columns);
         layout.Controls.Add(buttons);
         Controls.Add(layout);
 
@@ -137,10 +130,8 @@ internal sealed class ConfigForm : Form
         _teapots.Checked = true; // the original had them too
     }
 
-    /// <summary>The flight settings only matter when flying through the pipes.</summary>
-    private void UpdateFlightSpeedToggle() =>
-        _flightSpeed.Enabled = _flightSpeedValue.Enabled = _varySpeed.Enabled = _flightStyle.Enabled = _flightStyleValue.Enabled =
-            _camera.SelectedIndex == (int)CameraMotion.FlyThrough;
+    /// <summary>The flight settings only matter when flying through the pipes: grey out the whole group otherwise.</summary>
+    private void UpdateFlightSpeedToggle() => _flightGroup.Enabled = _camera.SelectedIndex == (int)CameraMotion.FlyThrough;
 
     /// <summary>A word for each stretch of the flight style slider, from calm to hectic.</summary>
     private static string StyleName(int level) => level switch
@@ -156,7 +147,78 @@ internal sealed class ConfigForm : Form
     private void UpdateEffectToggles()
     {
         var modern = _style.SelectedIndex == (int)GraphicsStyle.Modern;
-        _ao.Enabled = _bloom.Enabled = _dof.Enabled = modern;
+        _shadows.Enabled = _ao.Enabled = _bloom.Enabled = _dof.Enabled = modern;
+    }
+
+    /// <summary>
+    /// A labelled group box holding a two-column table: a label on the left (blank for checkboxes, which carry their
+    /// own text), the control on the right.
+    /// </summary>
+    private static GroupBox Group(string title, List<GroupBox> groups, List<Label> labels, params (string Label, Control Control)[] rows)
+    {
+        var table = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill, Padding = new Padding(4, 6, 4, 4) };
+        foreach (var (text, control) in rows)
+        {
+            // Anchored left only (not top), a control is centred vertically in its row, so labels line up with
+            // their controls whatever height the row ends up.
+            var label = new Label { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 3, 14, 3) };
+            labels.Add(label);
+            control.Anchor = AnchorStyles.Left;
+            control.Margin = new Padding(3, 5, 3, 5);
+            table.Controls.Add(label);
+            table.Controls.Add(control);
+        }
+        var box = new GroupBox
+        {
+            Text = title,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowOnly, // so AlignColumns can widen it to match its neighbour
+            Padding = new Padding(10, 6, 10, 8),
+            Margin = new Padding(6),
+        };
+        box.Controls.Add(table);
+        groups.Add(box);
+        return box;
+    }
+
+    /// <summary>Groups stacked top to bottom.</summary>
+    private static FlowLayoutPanel Column(params Control[] groups)
+    {
+        var column = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Margin = Padding.Empty };
+        column.Controls.AddRange(groups);
+        return column;
+    }
+
+    /// <summary>A slider with its current value shown to the right of it.</summary>
+    private static FlowLayoutPanel WithValue(TrackBar slider, Label value)
+    {
+        value.Anchor = AnchorStyles.Left; // centred on the slider
+        var row = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
+        row.Controls.AddRange([slider, value]);
+        return row;
+    }
+
+    /// <summary>
+    /// A slider without tick marks (the value shown next to it says where it is). A Windows slider draws its track
+    /// near the top of the control and keeps room below for ticks, so at its usual height it looks higher than the
+    /// labels centred on it. OnLoad trims it to just the thumb's height (see <see cref="SliderHeight"/>).
+    /// </summary>
+    private static TrackBar Slider(int min, int max) =>
+        new() { Minimum = min, Maximum = max, TickStyle = TickStyle.None, AutoSize = false, Width = 200 };
+
+    /// <summary>Slider height at 100% display scaling: about the thumb's height plus a little room.</summary>
+    private const int SliderHeight = 28;
+
+    /// <summary>
+    /// Line things up within each column: every row label as wide as the widest (so the controls start at the same
+    /// x in both groups), and both groups as wide as the wider one (so their borders line up).
+    /// </summary>
+    private static void AlignColumns(List<GroupBox> groups, List<Label> labels)
+    {
+        var labelWidth = labels.Max(l => l.PreferredWidth);
+        foreach (var label in labels) label.MinimumSize = new Size(labelWidth, 0);
+        var groupWidth = groups.Max(g => g.PreferredSize.Width);
+        foreach (var group in groups) group.MinimumSize = new Size(groupWidth, 0);
     }
 
     private static ComboBox Dropdown(params string[] items)
@@ -172,6 +234,10 @@ internal sealed class ConfigForm : Form
         // Sized here rather than when the dropdowns are created: only now are the final font and screen scaling
         // (DPI) known, and text measured earlier would come out too small on a scaled display.
         FitDropdowns(this);
+        foreach (var slider in new[] { _speed, _flightSpeed, _flightStyle })
+            slider.Height = LogicalToDeviceUnits(SliderHeight);
+        AlignColumns(_leftGroups, _leftLabels);
+        AlignColumns(_rightGroups, _rightLabels);
     }
 
     /// <summary>
@@ -228,6 +294,7 @@ internal sealed class ConfigForm : Form
         _ao.Checked = s.AmbientOcclusion;
         _bloom.Checked = s.Bloom;
         _dof.Checked = s.DepthOfField;
+        _shadows.Checked = s.Shadows;
         UpdateEffectToggles();
     }
 
@@ -251,6 +318,7 @@ internal sealed class ConfigForm : Form
         _settings.AmbientOcclusion = _ao.Checked;
         _settings.Bloom = _bloom.Checked;
         _settings.DepthOfField = _dof.Checked;
+        _settings.Shadows = _shadows.Checked;
         _settings.Clamped();
     }
 }

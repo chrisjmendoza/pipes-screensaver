@@ -9,10 +9,13 @@ single pass, described in its own section below.
 ## The pass chain
 
 ```
-                    ┌──────────────────┐   ┌──────┐   ┌─────────┐
- pieces ──────────► │ geometry prepass │──►│ SSAO │──►│ AO blur │───────────┐ (AO texture)
-   │                │ normals + depth  │   └──────┘   └─────────┘           │
-   │                └──────────────────┘                                    ▼
+                    ┌────────────────────────────┐
+ pieces ──────────► │ shadow map (from the light)│───────────────────────────┐ (shadow texture)
+   │                └────────────────────────────┘                           │
+   │                ┌──────────────────┐   ┌──────┐   ┌─────────┐            │
+   ├──────────────► │ geometry prepass │──►│ SSAO │──►│ AO blur │───────────┐│ (AO texture)
+   │                │ normals + depth  │   └──────┘   └─────────┘           ││
+   │                └──────────────────┘                                    ▼▼
    │                         │ (depth)        ┌───────────────────────────────┐
    └────────────────────────────────────────► │ scene: background + lit pipes │  HDR, MSAA
                              │                └───────────────────────────────┘
@@ -27,6 +30,47 @@ single pass, described in its own section below.
 
 The prepass only runs if SSAO or depth of field is on, and each optional pass only runs (and only allocates its
 textures) if enabled.
+
+## Shadows: a shadow map
+
+**The idea:** a point is in shadow if something sits between it and the light. The classic way to answer that on a
+GPU is a **shadow map**:
+
+1. **From the light** (`ShadowPass`): draw every piece's depth into a 2048×2048 texture, as the light "sees" it.
+   Each texel ends up holding the distance to the nearest surface along that ray of light. Only depth is written,
+   so the fragment shader (`ShadowFragment`) is empty, and it's cheap.
+2. **From the camera** (`keyLightVisibility` in `PipeFragment`): for each pixel, work out where its point lands in
+   the shadow map and how far it is from the light. If the map holds a nearer surface there, something is in the
+   way: shadow.
+
+Only the key light (warm, from above) casts shadows. The dim blue fill light doesn't, which is what a fill light
+is for: it keeps shadowed sides from going black.
+
+**Details that make it look right:**
+
+- **Orthographic, like the sun.** The key light is a sun, so its rays are parallel: no perspective. The light's
+  "camera" is a box looking along the light, fitted around a sphere the scene chooses (`Camera.SetShadowFocus`):
+  the whole box of pipes in the classic modes, and a region reaching ~38 units ahead of the camera in flight. The
+  box reaches three radii towards the light, so a pipe outside the sphere can still shadow something inside it.
+- **Shadow acne.** A surface compares against its *own* depth in the map, and rounding decides whether it shadows
+  itself, which shows as speckled stripes, worst on curved pipes. Two standard fixes, used together: `glPolygonOffset`
+  pushes stored depths slightly away from the light (more on steep surfaces), and the shader looks up a point nudged
+  1.5 texels off the surface along its normal (*normal offset*).
+- **Soft edges (PCF).** The map is a `sampler2DShadow` with comparison mode on: sampling returns "how lit" (0..1)
+  rather than a depth, and with linear filtering the GPU blends the 4 nearest texels' answers for free. Nine such
+  lookups spread over a few texels (*percentage-closer filtering*) turn a jagged edge into a soft one.
+- **No shimmer.** In flight the shadow region moves every frame. If it slid smoothly, each shadow's edge would land
+  on different texels every frame and crawl. So the light's box only moves in whole texels: its centre is rounded
+  to the texel size in the light's view (`LightViewProj`).
+- **No visible edge.** Shadows fade out over the outer 10% of the map, so where it ends never shows as a line.
+
+**In the tunnel,** a sun from above should mostly be blocked by the tunnel wall, and it is: the key light only gets
+in through gaps between pipes, which dapples the pipes like sunlight through a forest canopy. Ambient and fill light
+keep the rest colourful rather than murky.
+
+**Cost,** measured at 1920×1080 with 4× MSAA: +0.2 ms per frame for a box of ~3,000 pieces (0.9 → 1.1 ms), and
++0.45 ms in flight with ~9,700 pieces (1.5 → 2.0 ms). A 60 Hz frame has 16.7 ms. Classic (lite) mode has no
+shadows, like the original.
 
 ## Instancing: thousands of pieces, a handful of draw calls
 
@@ -275,7 +319,10 @@ infinity, and the blur's `inf - inf` is NaN.
 | `pow(..., 2.0)` in `AoBlurFragment` | `Shaders.cs` | AO contrast |
 | `maxBlur` in `DepthOfFieldPass` | `PipeRenderer.cs` | DoF blur size at 1080p (pixels) |
 | `depthOfFocus` in `Scene.UpdateCamera` | `Scene.cs` | how quickly things blur away from focus |
-| light directions/colours | `PipeFragment` | the overall lighting look |
+| light directions/colours | `PipeFragment` (key light: `KeyLight` in `PipeRenderer.cs`) | the overall lighting look |
+| `ShadowMapSize` | `PipeRenderer.cs` | shadow sharpness (and memory: 2048² × 3 bytes = 12 MB) |
+| `flightShadowRadius` | `Scene.cs` | how far ahead shadows reach in flight (bigger = blurrier) |
+| `PolygonOffset`, normal offset | `ShadowPass`, `keyLightVisibility` | shadow acne vs shadows detaching from their pipes |
 | `sky()` | `PipeFragment` | what reflections show |
 
 ## Further reading

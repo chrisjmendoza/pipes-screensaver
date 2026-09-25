@@ -9,11 +9,11 @@ namespace Pipes.Rendering;
 /// How the renderer is set up. Fixed for the renderer's lifetime. <see cref="Classic"/> is the lite mode, which
 /// turns every effect off regardless of the other switches.
 /// </summary>
-internal readonly record struct RenderOptions(int Samples, bool AmbientOcclusion, bool Bloom, bool DepthOfField, bool Classic)
+internal readonly record struct RenderOptions(int Samples, bool AmbientOcclusion, bool Bloom, bool DepthOfField, bool Shadows, bool Classic)
 {
     public static RenderOptions From(PipesSettings s) => s.Style == GraphicsStyle.Classic
-        ? new(s.Antialiasing, false, false, false, Classic: true)
-        : new(s.Antialiasing, s.AmbientOcclusion, s.Bloom, s.DepthOfField, Classic: false);
+        ? new(s.Antialiasing, false, false, false, false, Classic: true)
+        : new(s.Antialiasing, s.AmbientOcclusion, s.Bloom, s.DepthOfField, s.Shadows, Classic: false);
 }
 
 /// <summary>
@@ -24,6 +24,7 @@ internal readonly record struct RenderOptions(int Samples, bool AmbientOcclusion
 /// </para>
 /// <b>Modern style</b> adds fullscreen effect passes over offscreen textures. In order:
 /// <list type="number">
+/// <item><b>Shadow map</b> (optional): depth as seen from the key light.</item>
 /// <item><b>Geometry prepass</b> (only if AO or DoF is on): normals + depth into textures.</item>
 /// <item><b>SSAO</b> + <b>blur</b>: how enclosed each pixel is, used by the next pass to darken ambient light.</item>
 /// <item><b>Scene</b>: background and lit pipes into a multisampled, HDR (16-bit float) buffer.</item>
@@ -47,11 +48,23 @@ internal sealed unsafe class PipeRenderer : IDisposable
     /// <summary>SSAO search radius in world units (a cell is 1 unit, a pipe about 0.2 thick).</summary>
     private const float AoRadius = 1.0f;
 
+    /// <summary>
+    /// Shadow map size in texels. Over the whole box (about 30 units across) that's ~70 texels per unit, and in
+    /// flight (48 units) ~40; a pipe is 0.2–0.3 units thick.
+    /// </summary>
+    private const int ShadowMapSize = 2048;
+
+    /// <summary>Direction towards the key light, the one that casts shadows. Warm, from above, front and right.</summary>
+    private static readonly Vector3 KeyLight = Vector3.Normalize(new Vector3(0.5f, 0.8f, 0.6f));
+
     private readonly GL _gl;
     private readonly RenderOptions _options;
     // Only the programs the style needs are compiled; the rest stay 0 (which OpenGL ignores on delete).
     private readonly uint _pipeProgram, _geometryProgram, _bgProgram, _postProgram, _classicProgram;
-    private readonly uint _ssaoProgram, _aoBlurProgram, _dofProgram, _bloomDownProgram, _bloomUpProgram;
+    private readonly uint _ssaoProgram, _aoBlurProgram, _dofProgram, _bloomDownProgram, _bloomUpProgram, _shadowProgram;
+
+    // The shadow map doesn't depend on the screen size, so it's made once, not on every resize.
+    private readonly uint _shadowFbo, _shadowTex;
     private readonly uint _emptyVao;
     private readonly MeshBuffers[] _meshes = new MeshBuffers[PieceLists.KindCount];
     private readonly int[] _instanceCounts = new int[PieceLists.KindCount];
@@ -115,6 +128,12 @@ internal sealed unsafe class PipeRenderer : IDisposable
         _meshes[(int)MeshKind.Teapot] = CreateMesh(MeshBuilder.Teapot());
 
         _ssaoKernel = BuildSsaoKernel();
+
+        if (options.Shadows)
+        {
+            _shadowProgram = Program(Shaders.PipeVertex, Shaders.ShadowFragment);
+            (_shadowFbo, _shadowTex) = CreateShadowMap();
+        }
     }
 
     /// <summary>Which vertex-shader path (uMode) draws each kind of mesh.</summary>
@@ -202,9 +221,12 @@ internal sealed unsafe class PipeRenderer : IDisposable
             return;
         }
 
+        var shadows = _options.Shadows && camera.ShadowRadius > 0f;
+        var lightViewProj = shadows ? LightViewProj(camera) : Matrix4x4.Identity;
+        if (shadows) ShadowPass(lightViewProj);
         if (NeedsGeometryPass) GeometryPass(camera);
         if (_options.AmbientOcclusion) AmbientOcclusionPass(camera);
-        ScenePass(camera);
+        ScenePass(camera, shadows, lightViewProj, camera.ShadowRadius * 2f / ShadowMapSize);
 
         // Resolve MSAA: the GPU averages each pixel's samples as it copies.
         Blit(_sceneFbo, _resolveFbo);
@@ -237,6 +259,65 @@ internal sealed unsafe class PipeRenderer : IDisposable
         SetVector(_classicProgram, "uCameraPos", camera.Position);
         _gl.Uniform1(Loc(_classicProgram, "uFade"), fade);
         DrawPieces(_classicProgram);
+    }
+
+    /// <summary>
+    /// The view from the key light, as a matrix that takes a world position to shadow-map coordinates (-1..1 across
+    /// the map, and depth).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The key light is a sun: very far away, so its rays are parallel. That makes it an <b>orthographic</b>
+    /// projection (no perspective), a box looking along the light, sized to hold the camera's shadow sphere.
+    /// </para>
+    /// <para>
+    /// <b>Texel snapping.</b> In flight the sphere moves every frame. If the box slid smoothly with it, each shadow's
+    /// edge would land on slightly different texels every frame and visibly crawl ("shimmer"). So the box only moves
+    /// in whole texels: in the light's view, the centre is rounded to a multiple of the texel size.
+    /// </para>
+    /// <para>
+    /// The box reaches 3 radii towards the light, not just 1, so a pipe outside the sphere but between it and the
+    /// light still casts its shadow into it.
+    /// </para>
+    /// </remarks>
+    private static Matrix4x4 LightViewProj(Camera camera)
+    {
+        var r = camera.ShadowRadius;
+        // A fixed rotation, looking along the light from the origin. Only the orientation matters for an
+        // orthographic view; where the box sits is chosen below.
+        var view = Matrix4x4.CreateLookAt(Vector3.Zero, -KeyLight, Vector3.UnitY);
+        var centre = Vector3.Transform(camera.ShadowCentre, view);
+        var texel = 2f * r / ShadowMapSize;
+        centre.X = MathF.Round(centre.X / texel) * texel;
+        centre.Y = MathF.Round(centre.Y / texel) * texel;
+        // View space looks down -Z, so a point's distance in front is -Z.
+        var projection = Matrix4x4.CreateOrthographicOffCenter(
+            centre.X - r, centre.X + r, centre.Y - r, centre.Y + r, -centre.Z - 3f * r, -centre.Z + r);
+        return view * projection;
+    }
+
+    /// <summary>
+    /// Render every piece's depth from the key light into the shadow map. When the scene pass shades a point, it
+    /// checks the map: if something nearer the light is recorded there, the point is in shadow.
+    /// </summary>
+    private void ShadowPass(Matrix4x4 lightViewProj)
+    {
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _shadowFbo);
+        _gl.Viewport(0, 0, ShadowMapSize, ShadowMapSize);
+        _gl.Clear(ClearBufferMask.DepthBufferBit);
+        _gl.Enable(EnableCap.DepthTest);
+        _gl.DepthMask(true);
+        _gl.Disable(EnableCap.CullFace);
+        // Push the stored depths slightly away from the light, more on surfaces steeply angled to it. Along with
+        // the normal offset in the shader, this stops surfaces shadowing themselves.
+        _gl.Enable(EnableCap.PolygonOffsetFill);
+        _gl.PolygonOffset(1.5f, 3f);
+
+        _gl.UseProgram(_shadowProgram);
+        SetMatrix(_shadowProgram, "uViewProj", lightViewProj);
+        DrawPieces(_shadowProgram);
+
+        _gl.Disable(EnableCap.PolygonOffsetFill);
     }
 
     private void GeometryPass(Camera camera)
@@ -280,7 +361,7 @@ internal sealed unsafe class PipeRenderer : IDisposable
         DrawFullscreen();
     }
 
-    private void ScenePass(Camera camera)
+    private void ScenePass(Camera camera, bool shadows, Matrix4x4 lightViewProj, float shadowTexel)
     {
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _sceneFbo);
         _gl.Viewport(0, 0, (uint)_width, (uint)_height);
@@ -304,6 +385,19 @@ internal sealed unsafe class PipeRenderer : IDisposable
         _gl.Uniform1(Loc(_pipeProgram, "uUseAO"), _options.AmbientOcclusion ? 1 : 0);
         _gl.Uniform2(Loc(_pipeProgram, "uInvViewport"), 1f / _width, 1f / _height);
         if (_options.AmbientOcclusion) BindTexture(_pipeProgram, "uAO", 0, _aoBlurTex);
+        SetVector(_pipeProgram, "uKeyLight", KeyLight);
+        _gl.Uniform1(Loc(_pipeProgram, "uUseShadow"), shadows ? 1 : 0);
+        if (shadows)
+        {
+            BindTexture(_pipeProgram, "uShadowMap", 1, _shadowTex);
+            SetMatrix(_pipeProgram, "uLightViewProj", lightViewProj);
+            _gl.Uniform1(Loc(_pipeProgram, "uShadowTexel"), shadowTexel);
+        }
+        else
+        {
+            // Samplers of different types (sampler2D, sampler2DShadow) mustn't share a texture unit, even unused.
+            _gl.Uniform1(Loc(_pipeProgram, "uShadowMap"), 1);
+        }
         DrawPieces(_pipeProgram);
     }
 
@@ -521,6 +615,34 @@ internal sealed unsafe class PipeRenderer : IDisposable
         return new MeshBuffers(vao, vbo, ebo, instanceVbo, (uint)indices.Length);
     }
 
+    /// <summary>
+    /// The shadow map: a depth texture with <b>comparison</b> switched on. Sampled through a <c>sampler2DShadow</c>,
+    /// it doesn't return a depth but the answer to "is this depth nearer than what's stored?" (1 lit, 0 shadowed),
+    /// and with linear filtering the GPU blends that answer across the 4 nearest texels for free.
+    /// </summary>
+    private (uint Fbo, uint Texture) CreateShadowMap()
+    {
+        var tex = _gl.GenTexture();
+        _gl.BindTexture(TextureTarget.Texture2D, tex);
+        _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.DepthComponent24, ShadowMapSize, ShadowMapSize, 0,
+            PixelFormat.DepthComponent, PixelType.UnsignedInt, null);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureCompareMode, (int)GLEnum.CompareRefToTexture);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureCompareFunc, (int)GLEnum.Lequal);
+
+        var fbo = _gl.GenFramebuffer();
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
+        _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment, TextureTarget.Texture2D, tex, 0);
+        _gl.DrawBuffer(DrawBufferMode.None); // depth only: no colour to write or read
+        _gl.ReadBuffer(ReadBufferMode.None);
+        CheckFramebuffer("shadow map");
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        return (fbo, tex);
+    }
+
     private uint NewTexture(InternalFormat internalFormat, PixelFormat format, int width, int height, bool linear = true)
     {
         var tex = _gl.GenTexture();
@@ -618,7 +740,9 @@ internal sealed unsafe class PipeRenderer : IDisposable
             _gl.DeleteBuffer(m.InstanceVbo);
         }
         _gl.DeleteVertexArray(_emptyVao);
-        foreach (var p in new[] { _pipeProgram, _geometryProgram, _bgProgram, _postProgram, _classicProgram, _ssaoProgram, _aoBlurProgram, _dofProgram, _bloomDownProgram, _bloomUpProgram })
+        _gl.DeleteFramebuffer(_shadowFbo);
+        _gl.DeleteTexture(_shadowTex);
+        foreach (var p in new[] { _pipeProgram, _geometryProgram, _bgProgram, _postProgram, _classicProgram, _ssaoProgram, _aoBlurProgram, _dofProgram, _bloomDownProgram, _bloomUpProgram, _shadowProgram })
             _gl.DeleteProgram(p);
     }
 

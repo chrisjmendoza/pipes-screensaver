@@ -122,6 +122,9 @@ public sealed class PipesSettings
     /// <summary>Blur pipes that are nearer or farther than the middle of the scene, like a camera lens.</summary>
     public bool DepthOfField { get; set; } = false;
 
+    /// <summary>The main light casts shadows: pipes shade the pipes behind them.</summary>
+    public bool Shadows { get; set; } = true;
+
     /// <summary>
     /// Settings files written before <see cref="Camera"/> existed had a <c>"CameraDrift": true/false</c> switch.
     /// This reads it (so "off" stays off) and is never written back out.

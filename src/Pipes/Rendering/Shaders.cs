@@ -172,8 +172,41 @@ internal static class Shaders
         uniform sampler2D uAO;      // screen-space ambient occlusion (1 = open, 0 = fully occluded)
         uniform int uUseAO;
         uniform vec2 uInvViewport;  // 1 / framebuffer size, to turn gl_FragCoord into a texture coordinate
+        uniform vec3 uKeyLight;     // direction towards the main light
+
+        uniform sampler2DShadow uShadowMap; // depth as seen from the key light (see PipeRenderer.ShadowPass)
+        uniform mat4 uLightViewProj;        // world -> shadow map
+        uniform int uUseShadow;
+        uniform float uShadowTexel;         // world size of one shadow-map texel
 
         out vec4 FragColor;
+
+        // How much of the key light reaches this point: 1 fully lit, 0 fully in shadow.
+        float keyLightVisibility(vec3 N)
+        {
+            if (uUseShadow == 0) return 1.0;
+
+            // "Normal offset": look up a point nudged off the surface along its normal. Without it, the surface
+            // compares against its own depth in the map, rounding decides, and it speckles itself with stripes
+            // of shadow ("shadow acne"), worst on curved pipes.
+            vec3 p = vWorld + N * uShadowTexel * 1.5;
+            vec3 uvz = (uLightViewProj * vec4(p, 1.0)).xyz * 0.5 + 0.5; // orthographic, so no divide by w
+
+            // Fade the shadows out towards the map's edge, so where it ends never shows as a line.
+            vec2 fromCentre = abs(uvz.xy * 2.0 - 1.0);
+            float fade = smoothstep(0.8, 1.0, max(fromCentre.x, fromCentre.y));
+            if (fade >= 1.0 || uvz.z >= 1.0) return 1.0;
+
+            // Percentage-closer filtering: a sampler2DShadow compares the given depth against the map and returns
+            // how lit it is, and with linear filtering the GPU already blends the 4 nearest texels' answers.
+            // 9 such lookups spread over a few texels give a soft edge instead of a jagged one.
+            vec2 texel = 1.5 / vec2(textureSize(uShadowMap, 0));
+            float lit = 0.0;
+            for (int x = -1; x <= 1; x++)
+                for (int y = -1; y <= 1; y++)
+                    lit += texture(uShadowMap, vec3(uvz.xy + vec2(x, y) * texel, uvz.z));
+            return mix(lit / 9.0, 1.0, fade);
+        }
 
         // Fake "studio" environment for reflections: a sky gradient with two soft light strips, so glossy pipes get
         // long, readable highlights. Rougher surfaces see blurrier strips: we widen them and dim them by the same
@@ -216,8 +249,10 @@ internal static class Shaders
             float shininess = exp2(mix(8.5, 3.0, rough));
             float specScale = 2.5 * sqrt(clamp(shininess / 120.0, 0.25, 2.0));
 
-            vec3 lightDirs[2] = vec3[](normalize(vec3(0.5, 0.8, 0.6)), normalize(vec3(-0.7, 0.2, -0.4)));
-            vec3 lightCols[2] = vec3[](vec3(2.6, 2.45, 2.25), vec3(0.45, 0.55, 0.8));
+            // The key light (warm, from above) casts the shadows; the dim blue fill doesn't, which is what a fill
+            // light is for: it keeps the shadowed side from going black.
+            vec3 lightDirs[2] = vec3[](uKeyLight, normalize(vec3(-0.7, 0.2, -0.4)));
+            vec3 lightCols[2] = vec3[](vec3(2.6, 2.45, 2.25) * keyLightVisibility(N), vec3(0.45, 0.55, 0.8));
 
             vec3 direct = vec3(0.0);
             for (int i = 0; i < 2; i++)
@@ -250,6 +285,14 @@ internal static class Shaders
             if (any(isnan(color)) || any(isinf(color))) color = vec3(0.0);
             FragColor = vec4(color, 1.0);
         }
+        """;
+
+    /// <summary>
+    /// Shadow pass: only depth matters (the GPU writes it without being asked), so there's nothing to do per pixel.
+    /// </summary>
+    public const string ShadowFragment = """
+        #version 330 core
+        void main() { }
         """;
 
     /// <summary>
