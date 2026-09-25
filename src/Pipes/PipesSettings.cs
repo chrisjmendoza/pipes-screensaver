@@ -90,7 +90,7 @@ public sealed class PipesSettings
 
     /// <summary>
     /// Fly-through only: the "pilot" speeds up and slows down around <see cref="FlightSpeed"/>: drifting, easing off
-    /// into tight turns and corkscrews, opening up on long straights.
+    /// into tight turns, opening up on long straights.
     /// </summary>
     public bool VaryFlightSpeed { get; set; } = true;
 
@@ -126,7 +126,10 @@ public sealed class PipesSettings
     /// <summary>A soft glow around bright highlights.</summary>
     public bool Bloom { get; set; } = true;
 
-    /// <summary>Blur pipes that are nearer or farther than the middle of the scene, like a camera lens.</summary>
+    /// <summary>
+    /// Blur pipes that are nearer or farther than the middle of the scene, like a camera lens. In fly-through it
+    /// fades out at take-off: the tunnel walls are too close for any focus to keep them sharp.
+    /// </summary>
     public bool DepthOfField { get; set; } = false;
 
     /// <summary>The main light casts shadows: pipes shade the pipes behind them.</summary>
@@ -142,6 +145,17 @@ public sealed class PipesSettings
     {
         get => null;
         set { if (value == false) Camera = CameraMotion.Still; }
+    }
+
+    /// <summary>
+    /// <see cref="CourseComplexity"/> was briefly called "FlightStyle". A file saved under that name keeps its value.
+    /// </summary>
+    [JsonPropertyName("FlightStyle")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? LegacyFlightStyle
+    {
+        get => null;
+        set { if (value is { } level) CourseComplexity = level; }
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };

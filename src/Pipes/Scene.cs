@@ -6,8 +6,9 @@ namespace Pipes;
 
 /// <summary>
 /// Runs one pipe world at a time and moves the camera. The classic cycle is: fade in, grow, hold, fade out, then a
-/// fresh world from a new angle. In fly-through mode the hold ends in a take-off instead: the camera flies into the
-/// pipes and on through an endless tunnel, and only fades out after <see cref="FlightSeconds"/>.
+/// fresh world from a new angle. In fly-through mode there's no hold: as soon as the scene's last pipe has started,
+/// the camera takes off into the pipes and on through an endless tunnel, and only fades out after
+/// <see cref="FlightSeconds"/>.
 /// </summary>
 internal sealed class Scene
 {
@@ -240,15 +241,14 @@ internal sealed class Scene
             side * (0.3f * MathF.Sin(_time * 0.37f + _phases.X)) +
             _up * (0.25f * MathF.Sin(_time * 0.29f + _phases.Y)));
 
-        // Before take-off, frame the box like the other modes. In flight, focus close and let fog hide the far end
-        // of the tunnel, where new pipes are still appearing.
-        var focus = float.Lerp(_distance, 10f, ease);
-        Camera.LookAt(eye, eye + forward * focus, _up, _aspect, VerticalFov,
+        // Before take-off, frame and focus on the box like the other modes. In flight, depth of field is off (a lens
+        // can only be sharp at one distance, and the tunnel walls are right beside the camera, so any focus blurred
+        // most of the screen; it fades out over the take-off), and fog hides the far end of the tunnel, where new
+        // pipes are still appearing.
+        Camera.LookAt(eye, eye + forward * _distance, _up, _aspect, VerticalFov,
             far: float.Lerp(_distance * 4f, tunnel.SpawnAheadMax + 28f, ease),
             fogReference: float.Lerp(_distance, 26f * SpeedFactor, ease),
-            depthOfFocus: float.Lerp(_depth * 0.5f + 1f, 6f, ease),
-            // No depth of field in flight: a lens can only be sharp at one distance, and the tunnel walls are right
-            // beside the camera, so any focus blurred most of the screen. It fades out over the take-off.
+            depthOfFocus: _depth * 0.5f + 1f,
             lensBlur: 1f - ease);
 
         // Shadows cover the whole box before take-off, then a region reaching ahead of the camera: from a little
@@ -318,9 +318,9 @@ internal sealed class Scene
     /// </para>
     /// <para>
     /// This is a pure function of the distance flown, not something accumulated frame by frame: each call replays the
-    /// maneuvers from the start of the flight (a few dozen at most). So it can't drift, and the same point of the flight
-    /// always looks the same. It's the attitude the camera is <i>aiming</i> for: <see cref="FollowRoll"/> then adds
-    /// the momentum on top.
+    /// maneuvers from the start of the flight (up to about a hundred on a long, fast flight: still cheap). So it can't
+    /// drift, and the same point of the flight always looks the same. It's the attitude the camera is <i>aiming</i>
+    /// for: <see cref="FollowRoll"/> then adds the momentum on top.
     /// </para>
     /// </remarks>
     /// <returns>The up vector, and whether the camera is in a gentle curve (which loosens the roll spring).</returns>
@@ -410,8 +410,9 @@ internal sealed class Scene
     /// <para>
     /// <b>Curvature</b> is how fast the direction of travel changes per unit flown. Averaging it over a stretch of
     /// path is easy: it's just (direction at the far end − direction at the near end) ÷ length. Here the stretch runs
-    /// a couple of units either side of the camera, which does two nice things: the bank eases in and out instead of
-    /// jumping when a curve starts, and it starts a moment <i>before</i> the curve, as a pilot anticipates it.
+    /// about 3.5 units either side of the camera (more at speed, and never past the room either side), which does
+    /// two nice things: the bank eases in and out instead of jumping when a curve starts, and it starts a moment
+    /// <i>before</i> the curve, as a pilot anticipates it.
     /// </para>
     /// <para>
     /// <b>Level</b> is carried through the curve by the smallest rotation that turns the old direction of travel into
@@ -627,7 +628,8 @@ internal sealed class Scene
         var brakingDistance = 12f * SpeedFactor;
         var caution = 0f;
         var clearAhead = float.MaxValue;
-        foreach (var m in _path!.Maneuvers)
+        _path!.EnsureLength(s + 60f); // the path is built on demand; make sure everything in range exists
+        foreach (var m in _path.Maneuvers)
         {
             if (m.EndS + 10f < s) continue;  // long gone
             if (m.StartS > s + 60f) break;   // this one and every later one are too far ahead to matter yet
@@ -646,7 +648,7 @@ internal sealed class Scene
     }
 
     /// <summary>
-    /// A repeatable "random" number between 0 and 1 from a turn's seed, a different one for each <paramref name="k"/>.
+    /// A repeatable "random" number between 0 and 1 from a maneuver's seed, a different one for each <paramref name="k"/>.
     /// It's the classic shader hash: multiply a sine by a big number and keep the fraction, which scrambles nearby
     /// inputs into unrelated outputs. Not good randomness, but plenty for varying how a turn is flown.
     /// </summary>

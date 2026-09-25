@@ -124,7 +124,7 @@ internal sealed class ConfigForm : Form
         Controls.Add(layout);
 
         LoadFrom(settings);
-        _camera.SelectedIndexChanged += (_, _) => UpdateFlightSpeedToggle();
+        _camera.SelectedIndexChanged += (_, _) => UpdateFlightGroup();
 
         // Hooked up after loading, so opening the dialog doesn't count as the user picking a style.
         _style.SelectedIndexChanged += (_, _) =>
@@ -149,7 +149,7 @@ internal sealed class ConfigForm : Form
     }
 
     /// <summary>The flight settings only matter when flying through the pipes: grey out the whole group otherwise.</summary>
-    private void UpdateFlightSpeedToggle() => _flightGroup.Enabled = _camera.SelectedIndex == (int)CameraMotion.FlyThrough;
+    private void UpdateFlightGroup() => _flightGroup.Enabled = _camera.SelectedIndex == (int)CameraMotion.FlyThrough;
 
     /// <summary>A word for each stretch of the course complexity slider, from calm to hectic.</summary>
     private static string ComplexityName(int level) => level switch
@@ -302,7 +302,7 @@ internal sealed class ConfigForm : Form
         _complexityValue.Text = ComplexityName(s.CourseComplexity);
         _density.Value = s.TunnelDensity;
         _densityValue.Text = $"{s.TunnelDensity * 10}%";
-        UpdateFlightSpeedToggle();
+        UpdateFlightGroup();
         _separateMonitors.Checked = s.SeparateMonitors;
         _joints.SelectedIndex = (int)s.Joints;
         _finish.SelectedIndex = (int)s.Finish;

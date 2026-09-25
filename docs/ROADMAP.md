@@ -23,10 +23,15 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 
 ## Ideas
 
-- **Textured/"flex" pipes:** ribbed flexible conduit (a ripple in the cylinder shader's radius along its length),
-  or subtle surface textures.
-- **Shadows:** real shadows from the key light (a shadow map) would add a lot of depth. SSAO currently does part of
-  that job.
+- **Ray-traced reflections:** the hardware ray tracing on RTX-class cards can't be reached from OpenGL (it needs
+  Vulkan or DirectX 12), but reflections can be traced in our own shader code: the pipes sit on a grid, and a grid
+  is a ready-made structure for stepping a reflection ray cell by cell, testing only the few pipes in each. Metal
+  pipes would then mirror the coloured pipes around them. Probably several milliseconds a frame, so an option that
+  stays off on weak GPUs; the curved elbows are the hard part to trace exactly. Start with the box scenes, where
+  metal pipes sit close enough to reflect each other.
+- **Presets:** a dropdown of starting points (Default, Classic 1995, Zen flight, Wild flight, Low power), and
+  perhaps "save current as" for the user's own.
+- **"Flex" pipes:** ribbed flexible conduit (a ripple in the cylinder shader's radius along its length).
 - **Performance mode:** half-resolution SSAO and DoF for integrated GPUs and very large multi-monitor setups.
 
 ## Done
@@ -38,10 +43,14 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - The teapot easter egg
 - SSAO, bloom, depth of field
 - Shadows from the key light (shadow map with soft edges), including dappled light in the fly-through tunnel
+- Smoother take-off: the tunnel mouth builds along with the box, no pause, and the spawn band catches up instead of
+  leaving a hole
+- Depth of field off in flight; two-column settings dialog with Reset to defaults, and a Cancel that closes it
 - Camera modes: still, orbit, float
 - Classic (lite) style: the original's look at about a tenth of the GPU cost
 - A scene per monitor (with portrait-aware grids), and no rendering in the gaps between monitors
-- Fly-through: the camera dives into the finished scene and flies on through an endless, self-building tunnel
+- Fly-through: the camera takes off as the scene finishes building and flies on through an endless, self-building
+  tunnel
 - Banking: the fly-through camera rolls through turns like a plane (including 180° rolls into dives)
 - Flight speed setting
 - Roll momentum: banking swings a little past each bank and past level, then eases back
