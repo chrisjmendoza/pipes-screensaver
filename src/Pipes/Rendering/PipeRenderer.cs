@@ -7,13 +7,15 @@ namespace Pipes.Rendering;
 
 /// <summary>
 /// How the renderer is set up. Fixed for the renderer's lifetime. <see cref="Classic"/> is the lite mode, which
-/// turns every effect off regardless of the other switches.
+/// turns every effect off regardless of the other switches. <see cref="Surfaces"/> picks which version of the modern
+/// pipe shader to compile: procedural surfaces, or the original flat shading.
 /// </summary>
-internal readonly record struct RenderOptions(int Samples, bool AmbientOcclusion, bool Bloom, bool DepthOfField, bool Shadows, bool Classic)
+internal readonly record struct RenderOptions(
+    int Samples, bool AmbientOcclusion, bool Bloom, bool DepthOfField, bool Shadows, bool Classic, bool Surfaces)
 {
     public static RenderOptions From(PipesSettings s) => s.Style == GraphicsStyle.Classic
-        ? new(s.Antialiasing, false, false, false, false, Classic: true)
-        : new(s.Antialiasing, s.AmbientOcclusion, s.Bloom, s.DepthOfField, s.Shadows, Classic: false);
+        ? new(s.Antialiasing, false, false, false, false, Classic: true, Surfaces: false)
+        : new(s.Antialiasing, s.AmbientOcclusion, s.Bloom, s.DepthOfField, s.Shadows, Classic: false, s.SurfaceDetail);
 }
 
 /// <summary>
@@ -114,7 +116,7 @@ internal sealed unsafe class PipeRenderer : IDisposable
             return;
         }
 
-        _pipeProgram = Program(Shaders.PipeVertex, Shaders.PipeFragment);
+        _pipeProgram = Program(Shaders.PipeVertex, Shaders.WithDefine(Shaders.PipeFragment, "SURFACES", options.Surfaces ? 1 : 0));
         _geometryProgram = Program(Shaders.PipeVertex, Shaders.GeometryFragment);
         _bgProgram = Program(Shaders.FullscreenVertex, Shaders.BackgroundFragment);
         _postProgram = Program(Shaders.FullscreenVertex, Shaders.PostFragment);

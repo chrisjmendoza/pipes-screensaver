@@ -24,7 +24,10 @@ public enum Finish
     Plastic,
     /// <summary>Polished metal with coloured reflections.</summary>
     Metallic,
-    /// <summary>Old pipes: worn and chipped paint, rust, copper with verdigris, galvanised steel, cast iron.</summary>
+    /// <summary>
+    /// Old pipes: worn and chipped paint, rust, copper with verdigris, galvanised steel, cast iron. Needs
+    /// <see cref="PipesSettings.SurfaceDetail"/>; without it (or in the classic style) it falls back to Mixed.
+    /// </summary>
     Weathered,
     /// <summary>Each pipe gets its own finish, from glossy paint through polished metal to rust.</summary>
     Mixed,
@@ -123,6 +126,13 @@ public sealed class PipesSettings
     /// <summary>Modern or classic (lite) rendering. Classic ignores the effect switches below.</summary>
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public GraphicsStyle Style { get; set; } = GraphicsStyle.Modern;
+
+    /// <summary>
+    /// Modern style only: procedural surfaces (grime, scratches, brushed grain, rust, patina...) with GGX highlights.
+    /// Off gives the original modern look: one flat colour per pipe with a Blinn-Phong highlight, which is also a
+    /// little cheaper to draw. The <see cref="Finish.Weathered"/> finish needs it on (off, it draws as Mixed).
+    /// </summary>
+    public bool SurfaceDetail { get; set; } = true;
 
     /// <summary>MSAA samples (0, 2, 4, 8).</summary>
     public int Antialiasing { get; set; } = 4;

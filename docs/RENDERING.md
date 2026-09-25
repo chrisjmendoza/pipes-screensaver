@@ -116,7 +116,7 @@ each time, which it can't simply recycle.
 
 The shading model borrows the core ideas of physically based rendering (PBR) without all of its maths. First,
 `surface()` works out what the pipe looks like at this pixel: colour, metalness, roughness and a normal (see the
-next section). Then:
+next section). Then (with Surface detail off, the older and simpler version described in "Turning them off"):
 
 - **Diffuse:** `albedo × (1 − metallic) × max(N·L, 0)` per light (Lambert). Metals have none: all their colour
   comes from reflections.
@@ -215,6 +215,34 @@ and Mixed → a bit of everything, mostly clean.
 **Cost** (`/bench`, 1920×1080, 4× MSAA, fly-through with ~9,000 pieces): Plastic 2.24 → 2.63 ms per frame,
 Mixed 2.14 → 2.83 ms. Most of it is the noise; the GGX lighting itself costs about 0.1 ms. The classic style is
 untouched (it ignores the new data), and renders pixel-for-pixel as before.
+
+### Turning them off: the original look
+
+The **Surface detail** setting (Graphics group, modern style only) switches all of this off and brings back the
+modern look from before the surfaces: one flat colour, metalness and roughness per pipe, a Blinn-Phong highlight,
+and the darker floor in `sky()`. Both versions live in the one `PipeFragment` source, split by the preprocessor:
+
+```glsl
+#if SURFACES
+    Surf s = surface(...);  // noise, GGX, anisotropy...
+#else
+    float shininess = ...;  // the original Blinn-Phong
+#endif
+```
+
+`PipeRenderer` compiles it with `#define SURFACES 1` or `0` inserted after the `#version` line
+(`Shaders.WithDefine`). The choice is made once, when the shader is compiled, rather than with a uniform and an
+`if` at run time, so the "off" shader really is the old one: the noise functions are never called, and the compiler
+throws them away. Generating shader *variants* from one source like this is how most engines handle features that
+can be switched on and off.
+
+The simulation side has to change too. With surfaces off, `PipeWorld.NextPlainMaterial` hands out the original
+materials (for example Mixed picks from the old four finishes instead of the nine surfaces), and valve stems and
+bolts go back to plain steel. It also draws from the random generator exactly as the old code did, so a `/shot`
+seed grows the same scene as before, and the "off" render matches the pre-surfaces version. The Weathered finish is
+nothing but surface detail, so without it it falls back to Mixed; the settings dialog keeps the two consistent
+(picking Weathered ticks Surface detail, unticking it moves Weathered to Mixed). The classic style always uses the
+original materials.
 
 ### Why HDR?
 
