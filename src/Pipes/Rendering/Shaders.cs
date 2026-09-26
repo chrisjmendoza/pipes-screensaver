@@ -1395,4 +1395,101 @@ internal static class Shaders
             FragColor = vec4(color * uFade, 1.0);
         }
         """;
+
+    // ------------------------------------------------------------------------------------------------------------
+    // Stats overlay (StatsOverlay). Both are drawn with FullscreenVertex and the viewport set to their rectangle,
+    // so vUv runs 0..1 across the rectangle. Output is premultiplied alpha, blended with (1, 1 - alpha).
+    // ------------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The stats panel: the picture GDI+ painted (<c>StatsPanel</c>), copied pixel for pixel. The bitmap's first row
+    /// is its top, and the texture's first row is at v = 0, so v runs downwards; only the part the panel uses
+    /// (<c>uUsed</c>) is shown.
+    /// </summary>
+    public const string OverlayPanelFragment = """
+        #version 330 core
+        in vec2 vUv;
+        uniform sampler2D uPanel;
+        uniform vec2 uUsed; // fraction of the texture's width and height the panel covers
+        out vec4 FragColor;
+
+        void main()
+        {
+            FragColor = texture(uPanel, vec2(vUv.x, 1.0 - vUv.y) * uUsed);
+        }
+        """;
+
+    /// <summary>
+    /// The live frame graph, redrawn every frame from the last few hundred frames' timings: one pixel column per
+    /// frame, newest on the right. Frame intervals are a filled area in the status colour (green while holding the
+    /// refresh rate, amber, red), with GPU and CPU time as lines over it and a dashed line at the refresh interval.
+    /// <para>
+    /// Each column only knows its own frame and the one before it, so the lines are drawn as steps: a pixel is on
+    /// the line if it lies between the previous column's height and this one's. At one frame per pixel that joins
+    /// up into a continuous trace, with no line geometry at all.
+    /// </para>
+    /// </summary>
+    public const string OverlayGraphFragment = """
+        #version 330 core
+        uniform sampler2D uData; // one texel per frame, oldest first: (interval, CPU, GPU) in ms, negative = unknown
+        uniform vec2 uOrigin;    // the graph's bottom-left corner in window pixels
+        uniform vec2 uSize;      // its size in pixels
+        uniform int uCount;      // frames across the graph: the last uCount texels
+        uniform float uScaleMs;  // milliseconds at the top of the graph
+        uniform float uBudgetMs; // the refresh interval
+        uniform float uCorner;   // corner radius in pixels, matching the panel's well
+        uniform vec3 uGood, uWarn, uBad, uGpu, uCpu;
+        out vec4 FragColor;
+
+        vec3 frameAt(int i)
+        {
+            int first = textureSize(uData, 0).x - uCount;
+            return texelFetch(uData, ivec2(first + clamp(i, 0, uCount - 1), 0), 0).rgb;
+        }
+
+        float heightOf(float ms) { return ms / uScaleMs * uSize.y; }
+
+        // Premultiplied "over": layer on top of what's there.
+        vec4 over(vec4 below, vec3 colour, float alpha) { return vec4(colour * alpha, alpha) + below * (1.0 - alpha); }
+
+        // Coverage of a stepped line through this column: from the previous frame's height to this frame's.
+        float stepLine(float y, float previousMs, float ms)
+        {
+            if (ms < 0.0) return 0.0;
+            float a = heightOf(previousMs < 0.0 ? ms : previousMs), b = heightOf(ms);
+            float lo = min(a, b) - 0.75, hi = max(a, b) + 0.75;
+            return clamp(min(y - lo, hi - y) + 0.5, 0.0, 1.0);
+        }
+
+        void main()
+        {
+            vec2 p = gl_FragCoord.xy - uOrigin;
+
+            // Rounded corners: a signed distance to a rounded rectangle, the usual trick for anti-aliased edges.
+            vec2 q = abs(p - uSize * 0.5) - (uSize * 0.5 - uCorner);
+            float edge = clamp(0.5 - (length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - uCorner), 0.0, 1.0);
+            if (edge <= 0.0) discard;
+
+            int i = int(p.x / uSize.x * float(uCount));
+            vec3 now = frameAt(i), before = frameAt(i - 1);
+            vec4 c = vec4(0.0);
+
+            // The refresh interval: a dashed line. Under the data, so the data stays readable.
+            float budgetY = heightOf(uBudgetMs);
+            if (abs(p.y - budgetY) < 0.5 && mod(p.x, 6.0) < 3.0) c = over(c, vec3(1.0), 0.28);
+
+            if (now.r > 0.0)
+            {
+                vec3 status = now.r <= uBudgetMs * 1.1 ? uGood : now.r <= uBudgetMs * 1.6 ? uWarn : uBad;
+                float top = heightOf(now.r);
+                // The area fades in towards its top edge, like a glow rising from the floor of the graph.
+                if (p.y < top) c = over(c, status, mix(0.08, 0.34, clamp(p.y / top, 0.0, 1.0)));
+                c = over(c, status, 0.95 * stepLine(p.y, before.r, now.r));
+            }
+            c = over(c, uCpu, 0.85 * stepLine(p.y, before.g, now.g));
+            c = over(c, uGpu, 0.95 * stepLine(p.y, before.b, now.b));
+
+            FragColor = c * edge;
+        }
+        """;
 }

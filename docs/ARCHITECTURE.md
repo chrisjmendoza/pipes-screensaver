@@ -31,6 +31,7 @@ There are three layers, and each only talks to the one below it:
 | Host | `Program.cs`, `GLHost.cs`, `View.cs`, `Native/Win32.cs` | Windows: windows, messages, monitors, the OpenGL context, screensaver command-line rules |
 | Scene | `Scene.cs`, `Simulation/*` | Pipes, the grid, spaces and flight paths, the camera. **No OpenGL at all.** |
 | Rendering | `Rendering/*` | OpenGL, shaders, meshes. Knows nothing about grids or pipe rules. |
+| Diagnostics | `Diagnostics/*`, `Rendering/StatsOverlay.cs` | The optional stats overlay: frame timing, GPU timer queries, hardware sensors |
 
 The simulation produces plain data (`PieceLists`: lists of cylinders, spheres, elbows...). The renderer consumes
 that data. Because neither depends on the other's internals, you can change pipe behaviour without touching
@@ -58,7 +59,8 @@ The frame loop in `GLHost.Run` is:
 3. Measure `dt`, the seconds since the last frame. It's clamped to 0.1s so a hitch (e.g. the PC waking up) doesn't
    make the pipes jump.
 4. For each view: update its scene, then render it into its rectangle.
-5. `SwapBuffers`, which queues the frame to be shown at the next refresh.
+5. With **Show performance stats** on, draw the stats overlay on top (see *Stats overlay* below).
+6. `SwapBuffers`, which queues the frame to be shown at the next refresh.
 
 ### Frame pacing: sleeping, not spinning
 
@@ -128,6 +130,60 @@ A few details:
 > but `DefWindowProc` was declared without a `CharSet`, so .NET picked the A version. The A version read "Pipes"
 > in UTF-16 (`P\0i\0p\0...`) as a byte string and stopped at the first zero byte. The fix is to declare every
 > text-handling function with `CharSet = CharSet.Unicode`. See the comment in `Native/Win32.cs`.
+
+### Stats overlay
+
+**Show performance stats** (Graphics group; F3 toggles it in the `/w` window) draws a panel in the top-left corner
+of the main monitor, for judging what a PC can handle:
+
+```
+┌──────────────────────────────────────┐
+│ ● PERFORMANCE          144 Hz · VSync│  status dot: green holding the refresh rate, amber, red
+│ 142 FPS                   6.94 ms    │  last half second
+│ FRAME TIMES        ─frame ─GPU ─CPU  │
+│ ▁▁▁▁▂▁▁▁▁▁▁▁▁▁▁▁▅▁▁▁▁▁▁▁▁- - - - - - │  live graph, one pixel per frame; dashes = refresh interval
+│ AVG FPS  1% LOW  0.1% LOW  WORST     │  last ten seconds
+│ GPU ██████████░░░░░   70%  4.82 ms   │  time per frame against the refresh interval
+│ CPU ██░░░░░░░░░░░░░   16%  1.10 ms   │
+│ GPU PASSES ▕███▌█▌██████████▌█▏      │  where the GPU time goes, pass by pass
+│ GPU load · temp · clocks · power ... │  whatever the hardware reports
+│ NVIDIA GeForce RTX 2070/PCIe/SSE2    │  the GPU OpenGL is really drawing on
+│ Modern · 1920×1080 · 4× MSAA · ...   │  what's being measured
+└──────────────────────────────────────┘
+```
+
+Three kinds of time per frame, because they answer different questions (`Diagnostics/FrameStats.cs`):
+
+- **Frame interval**, from one `SwapBuffers` to the next: what you see. With VSync it sits at the refresh interval
+  and jumps to a multiple of it when a frame misses, so on its own it can't say how close to the edge you are.
+- **CPU time**: simulating and queueing the draw calls.
+- **GPU time**: how long the GPU was actually busy. OpenGL calls return before the GPU has done anything, so a
+  Stopwatch can't measure this; `Diagnostics/GpuTimer.cs` drops **timestamp queries** (`glQueryCounter`) into the
+  command stream between passes (`PipeRenderer.Render` marks each one), and reads the GPU's clock back a few
+  frames later, once the results are ready, so it never makes the CPU wait. That also gives the per-pass split.
+
+CPU and GPU time against the refresh interval are the headroom: a GPU bar at 70% has room to spare; one near 100%
+will drop frames the moment the scene gets busier.
+
+Hardware readings come from `Diagnostics/SystemMonitor.cs`, sampled once a second on a background thread (some of
+the calls are slow, and on the render thread they'd show up in the very graph they're meant to explain): NVML
+(`nvml.dll`, installed with every NVIDIA driver) for load, temperature, clocks, power, VRAM and P-state, or on
+other GPUs the "GPU Engine" performance counters Task Manager reads, and CPU load from `GetSystemTimes`.
+
+Drawing it (`Rendering/StatsOverlay.cs`) is split in two:
+
+- The **panel** (text, bars, labels) is painted with GDI+ into a bitmap four times a second, on a thread-pool
+  thread, then uploaded as a texture (`Diagnostics/StatsPanel.cs`). OpenGL has no text at all, and painting it on
+  the render thread would put a spike in the graph four times a second.
+- The **graph** is a fragment shader (`Shaders.OverlayGraphFragment`) run over the graph's rectangle every frame,
+  reading the last few hundred frames from a 512×1 float texture. Each pixel column is one frame, and a pixel is on
+  a line if it lies between the previous column's value and this one's, so the lines join up with no geometry.
+
+The overlay's own GPU cost appears among the passes as "HUD" (about 0.03–0.07 ms).
+
+It also watches for one common problem: a laptop drawing on its integrated Intel GPU while an NVIDIA GPU sits idle
+(Optimus decides per program, and a screensaver isn't on its list of games). Then the panel says so, and how to
+switch Pipes to the fast GPU in Windows' graphics settings.
 
 ## Scene: the life of one pipe world
 
@@ -515,6 +571,9 @@ Say you want a pressure gauge: a small disc on a stem.
 - Renamed settings get a small compatibility shim (see `LegacyCameraDrift`), so upgrading doesn't reset anyone's
   choice.
 - `PIPES_SETTINGS` (environment variable) overrides the file location. Useful for test renders.
+
+`ShowStats` (the stats overlay) is the one setting that isn't about the picture; it sits at the bottom of the
+Graphics group.
 
 `ConfigForm` is the dialog, built in code rather than the WinForms designer: two columns of labelled groups
 (Animation and Flight on the left, Pipes and Graphics on the right), with the Flight group greyed out unless the

@@ -36,6 +36,7 @@ internal sealed class ConfigForm : Form
     private readonly CheckBox _ao = Check("Ambient occlusion (soft contact shadows)");
     private readonly CheckBox _bloom = Check("Bloom (glow on highlights)");
     private readonly CheckBox _dof = Check("Depth of field (blur near and far pipes; off in flight)");
+    private readonly CheckBox _stats = Check("Show performance stats (FPS, frame graph, GPU load)");
 
     private readonly GroupBox _flightGroup;
 
@@ -92,7 +93,8 @@ internal sealed class ConfigForm : Form
             ("", _traced),
             ("", _ao),
             ("", _bloom),
-            ("", _dof));
+            ("", _dof),
+            ("", _stats));
 
         var columns = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill };
         columns.Controls.Add(Column(animation, _flightGroup), 0, 0);
@@ -339,6 +341,7 @@ internal sealed class ConfigForm : Form
         _shadows.Checked = s.Shadows;
         _movingLight.Checked = s.MovingLight;
         _traced.Checked = s.TracedReflections;
+        _stats.Checked = s.ShowStats;
         UpdateEffectToggles();
     }
 
@@ -367,6 +370,7 @@ internal sealed class ConfigForm : Form
         _settings.Shadows = _shadows.Checked;
         _settings.MovingLight = _movingLight.Checked;
         _settings.TracedReflections = _traced.Checked;
+        _settings.ShowStats = _stats.Checked;
         _settings.Clamped();
     }
 }

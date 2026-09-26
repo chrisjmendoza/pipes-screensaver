@@ -41,6 +41,7 @@ internal static class Win32
     public const int SC_MONITORPOWER = 0xF170;
 
     public const int VK_ESCAPE = 0x1B;
+    public const int VK_F3 = 0x72;
 
     public const int SW_SHOW = 5;
     public const uint PM_REMOVE = 0x0001;

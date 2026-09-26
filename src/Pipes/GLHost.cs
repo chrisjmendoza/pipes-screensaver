@@ -43,6 +43,7 @@ internal sealed unsafe class GLHost : IDisposable
     private bool _running = true;
     private bool _resized;
     private bool _moved;
+    private bool _toggleStats;
     private Win32.POINT? _initialCursor;
     private readonly Stopwatch _sinceStart = Stopwatch.StartNew();
 
@@ -74,6 +75,18 @@ internal sealed unsafe class GLHost : IDisposable
         // may do by spinning a CPU core). See VBlankWaiter. Null if unavailable: then the driver paces as before.
         var vblank = VBlankWaiter.TryCreate(_hwnd);
 
+        // The stats overlay, if it's switched on. Never in the preview: the little monitor picture is too small.
+        StatsOverlay? stats = null;
+        void ShowStats(bool show)
+        {
+            if (show == (stats != null)) return;
+            if (show) stats = new StatsOverlay(_gl, _hwnd, settings);
+            else stats!.Dispose();
+            if (!show) stats = null;
+            foreach (var view in views) view.Renderer.Timer = stats?.Timer;
+        }
+        ShowStats(settings.ShowStats && _mode != HostMode.Preview);
+
         if (_mode == HostMode.Fullscreen)
         {
             Win32.ShowCursor(false);
@@ -84,6 +97,7 @@ internal sealed unsafe class GLHost : IDisposable
         {
             var clock = Stopwatch.StartNew();
             var last = clock.Elapsed.TotalSeconds;
+            var lastPresent = last;
             while (_running)
             {
                 while (Win32.PeekMessage(out var msg, IntPtr.Zero, 0, 0, Win32.PM_REMOVE))
@@ -110,6 +124,12 @@ internal sealed unsafe class GLHost : IDisposable
                     _moved = false;
                     vblank?.Dispose();
                     vblank = VBlankWaiter.TryCreate(_hwnd);
+                    stats?.DisplayChanged();
+                }
+                if (_toggleStats)
+                {
+                    _toggleStats = false;
+                    ShowStats(stats == null);
                 }
 
                 if (vblank != null && !vblank.Wait())
@@ -122,13 +142,30 @@ internal sealed unsafe class GLHost : IDisposable
                 var dt = (float)Math.Min(now - last, 0.1); // clamp after hitches so pipes don't jump
                 last = now;
 
+                stats?.BeginFrame();
                 foreach (var view in views) view.Update(dt);
                 RenderViews(views, 0, w, h);
+                // The CPU's share of the frame: simulating, and queueing the drawing (the GPU does it later).
+                var cpuMs = (clock.Elapsed.TotalSeconds - now) * 1000;
+                if (stats != null)
+                {
+                    var (left, top) = StatsCorner(views);
+                    stats.Draw(w, h, left, top, views.Count);
+                }
                 Win32.SwapBuffers(_hdc);
+
+                if (stats != null)
+                {
+                    // Frame interval, as seen on screen: from one SwapBuffers to the next.
+                    var presented = clock.Elapsed.TotalSeconds;
+                    stats.FrameDone((presented - lastPresent) * 1000, cpuMs);
+                    lastPresent = presented;
+                }
             }
         }
         finally
         {
+            stats?.Dispose();
             vblank?.Dispose();
             foreach (var view in views) view.Dispose();
             if (_mode == HostMode.Fullscreen) Win32.ShowCursor(true);
@@ -229,6 +266,16 @@ internal sealed unsafe class GLHost : IDisposable
             return [.. monitors.Select((m, i) => new View(_gl, settings, rng(i), m.X, m.Y, m.Width, m.Height))];
         return [new View(_gl, settings, rng(0), 0, 0, width, height)];
     }
+
+    /// <summary>
+    /// Where the stats overlay goes, in window pixels: the top-left corner of the main monitor, which is where the
+    /// taskbar's start button and most people's eyes are. Only fullscreen spans several monitors; in a window it's
+    /// the window's corner. The main monitor's top-left is (0, 0) on the desktop, so in the window that covers the
+    /// whole desktop it's at minus the desktop's origin.
+    /// </summary>
+    private (int Left, int Top) StatsCorner(List<View> views) => _mode == HostMode.Fullscreen
+        ? (-Win32.GetSystemMetrics(Win32.SM_XVIRTUALSCREEN), -Win32.GetSystemMetrics(Win32.SM_YVIRTUALSCREEN))
+        : (0, 0);
 
     private void RenderViews(List<View> views, uint targetFbo, int width, int height)
     {
@@ -389,6 +436,8 @@ internal sealed unsafe class GLHost : IDisposable
 
         if (_mode == HostMode.Fullscreen && IsExitInput(msg)) _running = false;
         if (_mode == HostMode.Windowed && msg == Win32.WM_KEYDOWN && (int)wParam == Win32.VK_ESCAPE) _running = false;
+        // F3 shows or hides the stats overlay in the windowed preview. (Fullscreen can't: any key ends a screensaver.)
+        if (_mode == HostMode.Windowed && msg == Win32.WM_KEYDOWN && (int)wParam == Win32.VK_F3) _toggleStats = true;
 
         return Win32.DefWindowProc(hWnd, msg, wParam, lParam);
     }
