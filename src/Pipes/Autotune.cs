@@ -4,11 +4,26 @@ using System.Text.Json.Serialization;
 
 namespace Pipes;
 
+/// <summary>
+/// How well a preset kept up. Two different questions, and conflating them reads badly: a preset can miss the
+/// headroom target and still make every refresh comfortably (12.6 ms against a 60 Hz screen's 16.7 ms is 80 fps,
+/// which is not "too slow" by any reading).
+/// </summary>
+internal enum AutotuneVerdict
+{
+    /// <summary>Within the target: it keeps up with room to spare, so busier moments have somewhere to go.</summary>
+    Comfortable,
+    /// <summary>Over the target but still inside the frame budget: it keeps up, with little spare.</summary>
+    Tight,
+    /// <summary>Over the frame budget: frames miss the refresh, which shows as stutter.</summary>
+    TooSlow,
+}
+
 /// <summary>One preset's measurement in an <see cref="AutotuneReport"/>.</summary>
 /// <param name="AvgMs">Average cost of a frame, in milliseconds.</param>
-/// <param name="P90Ms">90th percentile: nine frames in ten took this long or less. What "fits" is judged on.</param>
-/// <param name="Fits">Whether <paramref name="P90Ms"/> is within the report's target.</param>
-internal sealed record AutotuneResult(QualityPreset Preset, double AvgMs, double P90Ms, bool Fits);
+/// <param name="P90Ms">90th percentile: nine frames in ten took this long or less. What the verdict is judged on.</param>
+/// <param name="Verdict">How <paramref name="P90Ms"/> compares to the report's target and budget.</param>
+internal sealed record AutotuneResult(QualityPreset Preset, double AvgMs, double P90Ms, AutotuneVerdict Verdict);
 
 /// <summary>
 /// What /autotune found, written as JSON for the settings dialog to read back. <see cref="Results"/> holds the
@@ -47,13 +62,27 @@ internal sealed record AutotuneReport(
 internal static class Autotune
 {
     /// <summary>
-    /// A preset fits if nine frames in ten take at most this share of the frame budget (1000 ms ÷ refresh rate).
-    /// The rest is headroom: the test sees a short, typical stretch, and the real thing has heavier moments (a
-    /// denser patch of tunnel, all-metal scenes with traced reflections), a card that slows down as it heats up,
-    /// and other programs using the GPU. A frame that misses the refresh shows as a visible stutter, so it's better
-    /// to recommend one level too low than one too high.
+    /// A preset is <see cref="AutotuneVerdict.Comfortable"/> if nine frames in ten take at most this share of the
+    /// frame budget (1000 ms ÷ refresh rate). The rest is headroom: the test sees a short, typical stretch, and the
+    /// real thing has heavier moments (a denser patch of tunnel, all-metal scenes with traced reflections), a card
+    /// that slows down as it heats up, and other programs using the GPU. A frame that misses the refresh shows as a
+    /// visible stutter, so it's better to recommend one level too low than one too high.
     /// </summary>
+    /// <remarks>
+    /// This is the bar for <em>recommending</em> a preset, not for calling one too slow. Missing it means less spare
+    /// than we'd like, not that the screen can't keep up: only <see cref="AutotuneVerdict.TooSlow"/> (past the whole
+    /// budget) actually drops frames. Reporting the two as one verdict told people running at 80 fps that their
+    /// machine couldn't cope.
+    /// </remarks>
     public const double TargetShareOfBudget = 0.75;
+
+    /// <summary>
+    /// Which verdict a measured 90th-percentile frame time earns against the frame budget and the headroom target.
+    /// </summary>
+    public static AutotuneVerdict Judge(double p90Ms, double targetMs, double budgetMs) =>
+        p90Ms <= targetMs ? AutotuneVerdict.Comfortable
+        : p90Ms <= budgetMs ? AutotuneVerdict.Tight
+        : AutotuneVerdict.TooSlow;
 
     /// <summary>
     /// Which frame time decides: the 90th percentile rather than the average, so a preset that's usually fast but

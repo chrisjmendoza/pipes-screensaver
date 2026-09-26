@@ -625,7 +625,7 @@ ConfigForm.TestThisPc                                  Pipes.exe /autotune resul
   ├─ Autotune.RunAsync: start child, await exit          ├─ real desktop size, primary monitor's Hz
   │   (progress window, Cancel, 90 s time-out)           ├─ simulate the scenes once
   │                                                      ├─ for each preset, Lite → Ultra: time the same scenes
-  └─ read result JSON ◄─────────────────────────────────  └─ write the report, stop at the first too slow
+  └─ read result JSON ◄─────────────────────────────────  └─ write the report, stop past the frame budget
       └─ AutotuneResultsForm: table, "Use High"
 ```
 
@@ -653,12 +653,17 @@ files are deleted afterwards.
 - A warm-up before timing: 1.5 seconds before the first preset, because an idle GPU runs at a low clock and takes a
   while to speed up (see `/bench` below), and 0.3 seconds before each later one, for its new shaders and buffers.
 - Then about a second (at least 45 frames) per preset, each frame timed on its own: scene update, render, and
-  `glFinish`, so the time includes the GPU's work. A preset **fits** if nine frames in ten take at most 75% of the
-  budget (5.2 ms at 144 Hz, 12.5 ms at 60 Hz). The percentile, not the average, so a preset that stutters every few
-  frames doesn't pass; the spare quarter is headroom for busier moments, a GPU slowing down as it heats up, and
-  other programs. The constants, with their reasons, are in `Autotune.cs`.
-- Presets only get heavier, so the first that doesn't fit ends the test (its numbers are still reported). The
-  recommendation is the last one that fit, or Lite if none did.
+  `glFinish`, so the time includes the GPU's work. Each preset gets one of three verdicts, on the frame time nine
+  frames in ten stayed under (the percentile, not the average, so a preset that stutters every few frames doesn't
+  pass): **Comfortable** at or under 75% of the budget (5.2 ms at 144 Hz, 12.5 ms at 60 Hz), **Tight** past that but
+  still inside the budget itself, and **TooSlow** past the budget. The spare quarter is headroom for busier moments,
+  a GPU slowing down as it heats up, and other programs. The constants, with their reasons, are in `Autotune.cs`.
+- The two questions are kept apart deliberately: missing the headroom target is not the same as being too slow. At
+  60 Hz a preset measuring 12.6 ms is running at about 80 fps and misses nothing; calling that "too slow", as an
+  earlier version did, told people with perfectly good frame rates that their machine couldn't cope.
+- Presets only get heavier, so the first that goes past the budget ends the test (its numbers are still reported);
+  a merely Tight one doesn't stop it. The recommendation is the last Comfortable preset, or failing that the last
+  Tight one, or Lite if even that couldn't hold the refresh.
 
 The report is JSON (the `AutotuneReport` record):
 
@@ -668,16 +673,16 @@ The report is JSON (the `AutotuneReport` record):
   "width": 5680, "height": 1920, "viewCount": 3,
   "renderer": "NVIDIA GeForce RTX 3080/PCIe/SSE2", "camera": "FlyThrough", "simulatedSeconds": 39.85,
   "results": [
-    { "preset": "Lite", "avgMs": 2.708, "p90Ms": 3.278, "fits": true },
+    { "preset": "Lite", "avgMs": 2.708, "p90Ms": 3.278, "verdict": "Comfortable" },
     ...
-    { "preset": "Ultra", "avgMs": 13.906, "p90Ms": 15.171, "fits": false }
+    { "preset": "Ultra", "avgMs": 13.906, "p90Ms": 15.171, "verdict": "TooSlow" }
   ],
   "recommended": "High"
 }
 ```
 
-`AutotuneResultsForm` shows it as a table (preset, frame time, fps, ✓ or "too slow"), the budget line, and the
-`GL_RENDERER` string. If that names an Intel chip or Windows' software renderer, it adds a note: on laptops with
+`AutotuneResultsForm` shows it as a table (preset, frame time, fps, and ✓, "✓ little to spare" or "too slow"), the
+budget line, and the `GL_RENDERER` string. If that names an Intel chip or Windows' software renderer, it adds a note: on laptops with
 switchable graphics, Windows often runs small programs on the integrated chip unless told otherwise in Settings >
 System > Display > Graphics. **Use High** (or whichever) sets the Quality dropdown; as with everything in the
 dialog, nothing is saved until OK. If the child exits with an error code, times out, or leaves no readable report,

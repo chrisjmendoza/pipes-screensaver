@@ -27,8 +27,11 @@ Changes merged to `main` since the last release go here, and move under a new ve
   (docs/ARCHITECTURE.md, "Quality presets")
 - **Test this PC…** button next to it: times each preset for a moment on your real screens, at your monitor's
   refresh rate, and recommends the highest one whose frames (nine in ten) take at most three-quarters of the time
-  between refreshes. Shows the results per preset and which graphics chip was used, with a hint for laptops that
-  ran it on the integrated chip. The test runs in a separate process, so a graphics driver crash just fails the
+  between refreshes, leaving the rest as headroom. A preset past that mark but still inside the frame budget is
+  reported as keeping up with little to spare, not as "too slow" — at 60 Hz, 12.6 ms a frame is about 80 fps and
+  misses nothing — and only a preset that can't hold the refresh at all is called too slow. Testing stops there
+  too, rather than at the headroom mark, so the levels either side of it still get measured. Shows the results per
+  preset and which graphics chip was used, with a hint for laptops that ran it on the integrated chip. The test runs in a separate process, so a graphics driver crash just fails the
   test instead of closing the settings. (docs/ARCHITECTURE.md, "Test this PC")
 - `/autotune <result.json>` command behind the button, which writes the measurements as JSON.
 

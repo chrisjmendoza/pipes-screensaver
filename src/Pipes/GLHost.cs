@@ -326,10 +326,12 @@ internal sealed unsafe class GLHost : IDisposable
                 }
 
                 var p90 = Pipes.Autotune.Percentile(frameTimes, Pipes.Autotune.JudgedPercentile);
-                var fits = p90 <= targetMs;
-                results.Add(new AutotuneResult(preset, Math.Round(frameTimes.Average(), 3), Math.Round(p90, 3), fits));
-                // The presets only get heavier from here, so the first that doesn't fit ends the test.
-                if (!fits) break;
+                var verdict = Pipes.Autotune.Judge(p90, targetMs, budgetMs);
+                results.Add(new AutotuneResult(preset, Math.Round(frameTimes.Average(), 3), Math.Round(p90, 3), verdict));
+                // The presets only get heavier from here, so the first that can't hold the refresh ends the test.
+                // Merely missing the headroom target doesn't: a preset that keeps up with little to spare is still
+                // worth knowing about, and the next one up may yet be comfortable on a faster part of the scene.
+                if (verdict == AutotuneVerdict.TooSlow) break;
             }
         }
         finally
@@ -339,9 +341,10 @@ internal sealed unsafe class GLHost : IDisposable
             foreach (var view in views) view.Dispose();
         }
 
-        // The highest preset that fit (they're tried lightest first). If even Lite didn't, it's still the lightest
-        // there is, so recommend it anyway.
-        var recommended = results.LastOrDefault(r => r.Fits)?.Preset ?? QualityPreset.Lite;
+        // The highest preset with room to spare (they're tried lightest first). Failing that, the highest that still
+        // holds the refresh, even if barely. If even Lite can't, it's still the lightest there is, so recommend it.
+        var recommended = (results.LastOrDefault(r => r.Verdict == AutotuneVerdict.Comfortable)
+            ?? results.LastOrDefault(r => r.Verdict == AutotuneVerdict.Tight))?.Preset ?? QualityPreset.Lite;
         Pipes.Autotune.Write(new AutotuneReport(
             refreshHz, Math.Round(budgetMs, 3), Math.Round(targetMs, 3), width, height, views.Count,
             _gl.GetStringS(StringName.Renderer) ?? "unknown", settings.Camera, simulated, results, recommended), resultPath);

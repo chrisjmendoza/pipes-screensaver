@@ -80,12 +80,21 @@ internal sealed class AutotuneResultsForm : Form
 
         var layout = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Fill };
 
-        var anyFits = report.Results.Any(r => r.Fits);
-        layout.Controls.Add(Paragraph(anyFits
-            ? $"Recommended: {report.Recommended}, the highest quality that keeps up with your screen here."
-            : "Even Lite was slower than the target here, but it's the lightest there is, so it's still the best choice. " +
-              "If other programs were busy, close them and test again: the frame times include the processor's work too.",
-            bold: true));
+        // Three outcomes, and they read very differently: comfortably fast, fast enough but without much spare, and
+        // genuinely unable to hold the refresh. Only the last is bad news, and only the last says so.
+        var best = report.Results.Count == 0 ? AutotuneVerdict.TooSlow : report.Results.Min(r => r.Verdict);
+        layout.Controls.Add(Paragraph(best switch
+        {
+            AutotuneVerdict.Comfortable =>
+                $"Recommended: {report.Recommended}, the highest quality that keeps up with your screen here with room to spare.",
+            AutotuneVerdict.Tight =>
+                $"Recommended: {report.Recommended}. It keeps up with your screen here, but without much to spare, " +
+                "so a busy moment may stutter. Drop a level if you see one.",
+            _ =>
+                "Even Lite couldn't hold your screen's frame rate here, but it's the lightest there is, so it's still " +
+                "the best choice. If other programs were busy, close them and test again: the frame times include " +
+                "the processor's work too.",
+        }, bold: true));
         // "144 Hz: 6.9 ms per frame, aiming for at most 5.2 ms". The rest is headroom; see Autotune.TargetShareOfBudget.
         layout.Controls.Add(Paragraph(
             $"{report.RefreshHz} Hz: {report.BudgetMs:F1} ms per frame, aiming for at most {report.TargetMs:F1} ms " +
@@ -145,7 +154,12 @@ internal sealed class AutotuneResultsForm : Form
                 Cell(preset.ToString(), 0, bold);
                 Cell($"{r.P90Ms:F1} ms", 1, bold, right: true);
                 Cell($"{1000 / r.P90Ms:F0}", 2, bold, right: true);
-                Cell(r.Fits ? "✓" : "too slow", 3, bold);
+                Cell(r.Verdict switch
+                {
+                    AutotuneVerdict.Comfortable => "✓",
+                    AutotuneVerdict.Tight => "✓ little to spare",
+                    _ => "too slow",
+                }, 3, bold);
             }
             else
             {
