@@ -70,14 +70,17 @@ internal sealed unsafe class GLHost : IDisposable
         var (w, h) = ClientSize();
         var perMonitor = _mode == HostMode.Fullscreen && settings.SeparateMonitors;
 
-        // On battery, the graphics settings are held down to PipesSettings.BatteryQuality. Only the renderers see the
-        // difference: the scene is built from the settings the user chose, so unplugging can't change the pipes.
+        // On battery, the graphics settings are held down to PipesSettings.BatteryQuality. Only the renderers (and
+        // the stats overlay's description of what's being measured) see the capped copy: the scenes are built from
+        // the settings the user chose, so the power lead can't change the pipes, only what a frame costs. (The scene
+        // does read the graphics settings, for its materials: with surface detail off it picks plain finishes. Given
+        // the capped copy, a session started on battery would keep picking plain pipes after plugging in.)
         var onBattery = PowerSource.OnBattery();
         PipesSettings Quality(bool battery) => battery && settings.BatteryQuality is { } cap
             ? QualityPresets.LimitedTo(cap, settings)
             : settings;
 
-        var views = CreateViews(Quality(onBattery), w, h, perMonitor, _ => new Random());
+        var views = CreateViews(settings, w, h, perMonitor, _ => new Random(), Quality(onBattery));
 
         // Pace frames by sleeping until the monitor's vertical blank, rather than letting the driver wait (which it
         // may do by spinning a CPU core). See VBlankWaiter. Null if unavailable: then the driver paces as before.
@@ -88,7 +91,7 @@ internal sealed unsafe class GLHost : IDisposable
         void ShowStats(bool show)
         {
             if (show == (stats != null)) return;
-            if (show) stats = new StatsOverlay(_gl, _hwnd, settings);
+            if (show) stats = new StatsOverlay(_gl, _hwnd, Quality(onBattery));
             else stats!.Dispose();
             if (!show) stats = null;
             foreach (var view in views) view.Renderer.Timer = stats?.Timer;
@@ -156,6 +159,7 @@ internal sealed unsafe class GLHost : IDisposable
                             view.ReplaceRenderer(new PipeRenderer(_gl, options));
                             view.Renderer.Timer = stats?.Timer; // the old renderer's timer went with it
                         }
+                        if (stats != null) stats.Settings = Quality(onBattery); // its footer says what's being measured
                     }
                 }
 
@@ -418,11 +422,11 @@ internal sealed unsafe class GLHost : IDisposable
     /// One view covering the whole target, or (with <paramref name="perMonitor"/> and more than one monitor) one per
     /// monitor, each placed where that monitor sits within the virtual desktop.
     /// </summary>
-    private List<View> CreateViews(PipesSettings settings, int width, int height, bool perMonitor, Func<int, Random> rng)
+    private List<View> CreateViews(PipesSettings settings, int width, int height, bool perMonitor, Func<int, Random> rng, PipesSettings? renderSettings = null)
     {
         if (perMonitor && MonitorLayout() is { Count: > 1 } monitors)
-            return [.. monitors.Select((m, i) => new View(_gl, settings, rng(i), m.X, m.Y, m.Width, m.Height))];
-        return [new View(_gl, settings, rng(0), 0, 0, width, height)];
+            return [.. monitors.Select((m, i) => new View(_gl, settings, rng(i), m.X, m.Y, m.Width, m.Height, renderSettings))];
+        return [new View(_gl, settings, rng(0), 0, 0, width, height, renderSettings)];
     }
 
     /// <summary>
