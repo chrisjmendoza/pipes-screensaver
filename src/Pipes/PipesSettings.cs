@@ -159,6 +159,14 @@ public sealed class PipesSettings
     public bool MovingLight { get; set; } = false;
 
     /// <summary>
+    /// Modern style only: metal pipes (and paint seen at a grazing angle) mirror the pipes around them. The pipe
+    /// shader fires a reflection ray through a grid of the scene's pieces; a ray that hits nothing shows the usual
+    /// studio sky. It costs GPU time, most of it in the fly-through tunnel: see docs/RENDERING.md, "Traced
+    /// reflections".
+    /// </summary>
+    public bool TracedReflections { get; set; } = false;
+
+    /// <summary>
     /// Settings files written before <see cref="Camera"/> existed had a <c>"CameraDrift": true/false</c> switch.
     /// This reads it (so "off" stays off) and is never written back out.
     /// </summary>

@@ -18,7 +18,8 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
 - **Effects:** shadows from the key light (soft-edged, and dappled inside the tunnel; optionally the light slowly
   circles the scene so the shadows sweep across the pipes), screen-space ambient
   occlusion (soft contact shadows), subtle bloom, and optional depth of field (before take-off only, in
-  fly-through).
+  fly-through). Optional **traced reflections**: metal pipes mirror the pipes around them, with reflection rays
+  traced through a grid of the scene in the pipe shader (no ray-tracing hardware needed).
 - **Scene flow:** pipes have a length budget so every scene gets a variety of colours. When a scene is done it
   holds for a moment, fades out, and restarts from a new angle. The camera can stay still, orbit, or float.
 - **Fly through the pipes:** a camera mode where, as the scene finishes building, the camera takes off into it and flies on
@@ -109,7 +110,8 @@ src/Pipes/
     Pieces.cs             the drawable pieces the simulation hands to the renderer
   Rendering/
     PipeRenderer.cs       instanced drawing and the chain of effect passes
-    Shaders.cs            all GLSL: pipe shading and surfaces, shadows, SSAO, bloom, depth of field, tonemapping
+    Shaders.cs            all GLSL: pipe shading and surfaces, traced reflections, shadows, SSAO, bloom, DoF, tonemapping
+    ReflectionGrid.cs     the scene filed into a grid each frame, for reflection rays to walk (traced reflections)
     MeshBuilder.cs        cylinder, sphere, torus and teapot meshes
     Camera.cs             view/projection, fog, focus and the shadow region
   Native/Win32.cs         P/Invoke declarations
@@ -127,8 +129,8 @@ There's no windowing library because preview mode must parent into a foreign HWN
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the program is put together, from `Main` to a frame on screen,
   and how the pipe simulation works.
-- [docs/RENDERING.md](docs/RENDERING.md): the graphics techniques, pass by pass (instancing, shading, surfaces, shadows, HDR, SSAO,
-  bloom, depth of field, tonemapping).
+- [docs/RENDERING.md](docs/RENDERING.md): the graphics techniques, pass by pass (instancing, shading, surfaces,
+  traced reflections, shadows, HDR, SSAO, bloom, depth of field, tonemapping).
 - [docs/ROADMAP.md](docs/ROADMAP.md): ideas, known issues, and what's done.
 
 ## License

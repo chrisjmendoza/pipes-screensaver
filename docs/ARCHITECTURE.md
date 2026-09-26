@@ -475,6 +475,25 @@ A tee reserves a side cell as well as the cell ahead. When the tee step complete
 Fittings are built entirely from these primitives. For example, a valve is a sphere (body), a cylinder (stem), a
 ring (handwheel), two thin cylinders (spokes) and a small sphere (hub). No special renderer support needed.
 
+### The same pieces as a scene to trace
+
+With **Traced reflections** on, the renderer uses the `PieceLists` a second way: as a scene a reflection ray can
+search. `Rendering/ReflectionGrid.cs` files every piece into a grid of unit cells each frame, and the pipe shader
+walks that grid to find what a pixel mirrors (RENDERING.md, "Traced reflections"). The data flows like this:
+
+```
+PieceLists ──► PipeRenderer.UploadInstances ──► instance buffers (one per MeshKind) ──► draw calls, as before
+    │                                                  │
+    │                                                  └─ also read as texture buffers: the pieces themselves
+    └──► ReflectionGrid.Build (CPU, counting sort) ──► cell table + entry list ──► texture buffers
+                                                                                        │
+                                           PipeFragment: tracePipes() walks the grid ◄──┘
+```
+
+Nothing about the simulation changes: the grid is built from the same lists, entries point at a piece by its kind
+and its index in that kind's list, and that index is also its place in the instance buffer, so the shader can read
+the piece straight out of the buffer the draw calls already use.
+
 ### Walkthrough: adding a new fitting
 
 Say you want a pressure gauge: a small disc on a stem.
@@ -522,6 +541,12 @@ the application's main window (`Application.Run`).
   time per frame. It renders untimed for 1.5 seconds first: an idle GPU runs at a low clock, and a benchmark this
   short can finish before it speeds up (the same settings once measured anywhere from 2.5 to 13 ms a frame).
   `_gl.Finish()` before stopping the clock makes it include the GPU's work, not just the time the CPU took to
-  queue commands. Combine it with `PIPES_SETTINGS` to compare settings.
+  queue commands. Combine it with `PIPES_SETTINGS` to compare settings. With traced reflections on, the report
+  also gives the CPU time spent building the reflection grid, upload calls included, averaged over the timed frames
+  only (the warm-up's first builds pay for JIT compiling and growing the arrays). It's part of the frame time too.
+- To check an acceleration structure (like the reflection grid), compare it with brute force: a temporary shader
+  that also tests every piece and paints the pixels where the two disagree. Slow, but it settles "is the structure
+  wrong, or is this something else?" at once. That's how the traced reflections' speckles were shown to be a
+  sampling problem rather than a bug in the grid walk.
 - For intermittent glitches, make them countable. Flag the bad pixels in a shader (e.g. `isnan()` → magenta),
   render a few thousand frames offscreen, and count. See "Bug story: the black boxes" in RENDERING.md.

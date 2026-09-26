@@ -5,9 +5,14 @@ namespace Pipes.Rendering;
 /// <code>
 ///  shadow map (from the key light) ─────┐
 ///  geometry prepass ─► SSAO ─► AO blur ─┤
+///  reflection grid (CPU; traced only) ──┤
 ///                                        ▼
-///  background + pipes (HDR, MSAA) ─► resolve ─► depth of field (optional) ─► bloom (optional) ─► post (tonemap) ─► screen
+///  background ─► depth prepass (traced only) ─► pipes (HDR, MSAA) ─► resolve ─► depth of field (optional)
+///                                                                    ─► bloom (optional) ─► post (tonemap) ─► screen
 /// </code>
+/// The depth prepass is <see cref="PipeVertex"/> with <see cref="ShadowFragment"/>, the shadow map's depth-only
+/// program, drawn from the camera; the reflection grid reaches <see cref="PipeFragment"/> as texture buffers
+/// (<see cref="ReflectionGrid"/>).
 /// </summary>
 internal static class Shaders
 {
@@ -110,7 +115,10 @@ internal static class Shaders
         return source.Insert(endOfVersion, $"#define {name} {value}\n");
     }
 
-    /// <summary>Modern vertex shader: place the vertex and pass everything on for per-pixel lighting.</summary>
+    /// <summary>
+    /// Modern vertex shader: place the vertex and pass everything on for per-pixel lighting. With <c>TRACED</c>
+    /// defined as 1 (<see cref="WithDefine"/>), <c>gl_Position</c> is declared <c>invariant</c>, for the depth prepass.
+    /// </summary>
     public const string PipeVertex = """
         #version 330 core
         """ + NewLine + Placement + NewLine + """
@@ -121,6 +129,13 @@ internal static class Shaders
         flat out vec3 vColor;    // "flat": same for the whole triangle, no interpolation needed
         flat out vec2 vMaterial; // metallic, roughness
         flat out vec3 vSurface;  // surface kind, seed, wear
+
+        // "invariant": compile gl_Position's maths the same way in every program that uses this shader. Without it
+        // the compiler may reorder or fuse the multiply-adds differently per program, and two programs drawing the
+        // same triangle can land a hair apart in depth. TRACED's depth prepass relies on them agreeing exactly.
+        #if TRACED
+        invariant gl_Position; // the depth prepass and the lit pass must agree on depth exactly (see PipeRenderer.ScenePass)
+        #endif
 
         void main()
         {
@@ -195,10 +210,17 @@ internal static class Shaders
     /// surfaces were added. The switch is made when compiling rather than with a uniform, so the "off" version
     /// really is the old shader: the noise functions are never called, and the compiler drops them.
     /// </para>
+    /// <para>
+    /// It also needs <c>TRACED</c> (1 or 0), from the Traced reflections setting. With 1, reflections fire a ray
+    /// through the scene's grid (<see cref="ReflectionGrid"/>) and show the pipe it hits instead of the fake sky;
+    /// with 0, none of that code exists and the shader renders exactly as before the feature.
+    /// See docs/RENDERING.md, "Traced reflections".
+    /// </para>
     /// </summary>
     public const string PipeFragment = """
         #version 330 core
         // SURFACES: 1 = procedural surfaces + GGX, 0 = the original flat shading. Defined by PipeRenderer.
+        // TRACED: 1 = reflections traced through the scene grid (see environment()), 0 = the sky only.
         in vec3 vWorld;
         in vec3 vNormal;
         in vec3 vTangent;
@@ -473,15 +495,15 @@ internal static class Shaders
             return s;
         }
 
-        // How much of the key light reaches this point: 1 fully lit, 0 fully in shadow.
-        float keyLightVisibility(vec3 N)
+        // How much of the key light reaches the point pos (normal N): 1 fully lit, 0 fully in shadow.
+        float keyLightVisibilityAt(vec3 pos, vec3 N)
         {
             if (uUseShadow == 0) return 1.0;
 
             // "Normal offset": look up a point nudged off the surface along its normal. Without it, the surface
             // compares against its own depth in the map, rounding decides, and it speckles itself with stripes
             // of shadow ("shadow acne"), worst on curved pipes.
-            vec3 p = vWorld + N * uShadowTexel * 1.5;
+            vec3 p = pos + N * uShadowTexel * 1.5;
             vec3 uvz = (uLightViewProj * vec4(p, 1.0)).xyz * 0.5 + 0.5; // orthographic, so no divide by w
 
             // Fade the shadows out towards the map's edge, so where it ends never shows as a line.
@@ -499,6 +521,9 @@ internal static class Shaders
                     lit += texture(uShadowMap, vec3(uvz.xy + vec2(x, y) * texel, uvz.z));
             return mix(lit / 9.0, 1.0, fade);
         }
+
+        // The same for the pixel being shaded. (Traced reflections also ask about the points their rays hit.)
+        float keyLightVisibility(vec3 N) { return keyLightVisibilityAt(vWorld, N); }
 
         // Fake "studio" environment for reflections: a sky gradient with two soft light strips, so glossy pipes get
         // long, readable highlights. Rougher surfaces see blurrier strips: we widen them and dim them by the same
@@ -531,11 +556,409 @@ internal static class Shaders
             return c + (vec3(2.2, 2.1, 2.0) * strip1 + vec3(0.9, 1.0, 1.2) * strip2) / blur;
         }
 
+        // ---- Traced reflections (TRACED) ------------------------------------------------------------------------
+        // sky() is a fake: a metal pipe mirrors a studio that isn't there, never the pipes right next to it. With
+        // TRACED, environment() below fires one real reflection ray into the scene and, if it hits a pipe, shows that
+        // pipe instead. The scene reaches the shader as a uniform grid of unit cells (ReflectionGrid.cs, rebuilt on
+        // the CPU every frame): per cell, the list of pieces that touch it. A ray walks the grid cell by cell and only
+        // tests the pieces in the cells it passes through, so the cost depends on how far it travels, not on how many
+        // pieces there are. See docs/RENDERING.md, "Traced reflections".
+        #if TRACED
+        uniform ivec3 uGridOrigin;        // integer coordinate of cell 0; cell i covers i - 0.5 .. i + 0.5 on each axis
+        uniform ivec3 uGridSize;          // cells along each axis (all 0 when there's nothing to trace)
+        uniform usamplerBuffer uCells;    // per cell: first entry, number of entries
+        uniform usamplerBuffer uEntries;  // per entry: kind << 24 | the piece's index within its kind
+        // The renderer's instance buffers, read as textures: 20 floats per piece = 5 RGBA texels, laid out as
+        // start.xyz axis.x | axis.yz side.xy | side.z color.rgb | radius sweep metallic roughness | surface seed wear -.
+        // GLSL 330 can't pick a sampler from an array with a run-time index, hence one sampler per kind and a switch.
+        uniform samplerBuffer uPiecesCyl;
+        uniform samplerBuffer uPiecesSph;
+        uniform samplerBuffer uPiecesElb;
+        uniform samplerBuffer uPiecesRing;
+
+        // Tuning knobs. MAX_TRACE_CELLS: the most grid cells one ray walks through before giving up (and showing the
+        // sky). 48 cells crosses a box scene and reaches well into the fog in flight; fewer is cheaper but cuts off
+        // distant reflections. ELBOW_STEPS: sphere-tracing steps per bend or ring (see hitTorus()).
+        const int MAX_TRACE_CELLS = 48;
+        const int ELBOW_STEPS = 16;
+        // Hits nearer than this along the ray are ignored: they'd be the surface the ray starts from.
+        const float TRACE_MIN_T = 0.02;
+        // The most a piece is fattened for the ray cone (see environment()), in world units.
+        const float MAX_CONE = 0.4;
+        // The least gap left between a fattened piece and the ray's origin (see fatten()).
+        const float FATTEN_GAP = 0.005;
+
+        vec3 gNgeo; // the geometric normal of the pixel being shaded, set at the top of main()
+
+        // What a reflection ray found: how far along the ray, the normal there, the piece's flat material, and how
+        // much of the ray's cone the piece covers (see environment()).
+        struct Hit { float t; vec3 n; vec3 albedo; float metallic; float rough; float cover; };
+
+        // One texel of one piece. Entries store the kind (the MeshKind enum) in their top 8 bits.
+        vec4 pieceTexel(uint kind, int texel)
+        {
+            switch (kind)
+            {
+            case 0u: return texelFetch(uPiecesCyl, texel);
+            case 1u: return texelFetch(uPiecesSph, texel);
+            case 2u: return texelFetch(uPiecesElb, texel);
+            default: return texelFetch(uPiecesRing, texel);
+            }
+        }
+
+        // How much to fatten a piece for the ray cone (see hitPiece()): the width the cone asks for, but never so
+        // much that the fattened surface reaches the ray's origin. room is the distance from the origin to the
+        // piece's real surface. Where a pipe runs into a ball, a ray leaving the pipe right next to the contact
+        // starts within a cone's width of the ball; fattened fully, the ball would swallow the origin, its near root
+        // would fall behind the ray and the ball would vanish from the reflection just where it touches. Limited,
+        // the piece is fattened less (down to not at all) close to the origin, and is still found.
+        float fatten(float width, float room)
+        {
+            return clamp(min(width, room - FATTEN_GAP), 0.0, MAX_CONE);
+        }
+
+        // Ray (origin o, unit direction d) against a sphere: the nearer root of |o + t d - c|^2 = r^2, a quadratic
+        // in t. Only the nearer root: a ray starting outside only ever sees the outside of a ball. The ball is the
+        // real one, radius real, fattened by w (see fatten()).
+        bool hitSphere(vec3 o, vec3 d, vec3 c, float real, float width, float tMax, out float t, out float w)
+        {
+            vec3 oc = o - c;
+            w = fatten(width, length(oc) - real);
+            float r = real + w;
+            float b = dot(oc, d);
+            float disc = b * b - (dot(oc, oc) - r * r);
+            t = -b - sqrt(max(disc, 0.0));
+            return disc >= 0.0 && t > TRACE_MIN_T && t < tMax;
+        }
+
+        // Ray against a capped cylinder from s to s + axis. The side: remove everything along the axis from the ray
+        // and it becomes a 2D ray against a circle, the same quadratic as a sphere; a hit counts if it lands between
+        // the ends. The caps: flat discs at each end. Flanges are short, fat cylinders, mostly seen face-on, so
+        // without the caps they'd be missing from reflections. A ray from outside can only come in through the cap
+        // facing it: the start cap if it travels along the axis, the end cap if against it.
+        // Only the side is fattened for the ray cone (by w, see fatten()); the caps keep the real radius: fattened
+        // caps would catch rays leaving the pipe next door (the next length of the same pipe, whose cap sits right
+        // against it).
+        bool hitCylinder(vec3 o, vec3 d, vec3 s, vec3 axis, float real, float width, float tMax, out float t, out vec3 n, out float w)
+        {
+            t = tMax;
+            n = vec3(0.0);
+            w = 0.0;
+            float len = length(axis);
+            if (len < 1e-5) return false;
+            vec3 a = axis / len;
+            vec3 oc = o - s;
+            float da = dot(d, a), oa = dot(oc, a);
+            vec3 dp = d - a * da, op = oc - a * oa; // the parts across the axis
+            // The room to fatten into: the origin's distance from the axis line, less the real radius.
+            w = fatten(width, length(op) - real);
+            float r = real + w;
+            bool found = false;
+
+            float qa = dot(dp, dp);
+            if (qa > 1e-8) // not running along the axis
+            {
+                float qb = dot(dp, op);
+                float disc = qb * qb - qa * (dot(op, op) - r * r);
+                if (disc >= 0.0)
+                {
+                    float ts = (-qb - sqrt(disc)) / qa;
+                    float along = oa + da * ts;
+                    if (ts > TRACE_MIN_T && ts < t && along >= 0.0 && along <= len)
+                    {
+                        t = ts;
+                        n = (op + dp * ts) / r; // straight out from the axis
+                        found = true;
+                    }
+                }
+            }
+            if (abs(da) > 1e-6)
+            {
+                float tc = ((da > 0.0 ? 0.0 : len) - oa) / da;
+                vec3 q = op + dp * tc; // offset from the axis where the ray crosses the cap's plane
+                if (tc > TRACE_MIN_T && tc < t && dot(q, q) <= real * real)
+                {
+                    t = tc;
+                    n = da > 0.0 ? -a : a;
+                    found = true;
+                }
+            }
+            return found;
+        }
+
+        // Signed distance from p to a torus arc (Inigo Quilez's capped torus): the arc lies in the xy plane,
+        // symmetric about +y, with half-angle a (sc = (sin a, cos a)), major radius ra and tube radius rb. Mirror to
+        // x >= 0; if p lies beyond the arc's end (its angle from +y is more than a), measure to the end point ra * sc,
+        // otherwise to the circle, whose nearest point is ra along p's direction in the plane. Either way it's the
+        // distance to that point on the centre line, minus the tube radius. Negative inside.
+        float sdCappedTorus(vec3 p, vec2 sc, float ra, float rb)
+        {
+            p.x = abs(p.x);
+            float k = (sc.y * p.x > sc.x * p.y) ? dot(p.xy, sc) : length(p.xy);
+            return sqrt(dot(p, p) + ra * ra - 2.0 * ra * k) - rb;
+        }
+
+        // Ray against a bend or ring (a torus, or part of one: see place() in the vertex shader for the layout). A
+        // torus is a quartic, with no closed form worth solving per pixel, so it's found by sphere tracing its
+        // distance field instead: the SDF says how far away the nearest surface is, so the ray can safely step that
+        // far, and repeat; near a surface the steps shrink towards it. Starts where the ray enters the piece's
+        // bounding sphere, and gives up after ELBOW_STEPS or on leaving the sphere. (A ray grazing past a tube
+        // converges slowly and can run out of steps: that just counts as a miss.)
+        // The tube is the real one, radius real, fattened by w (see fatten()).
+        bool hitTorus(vec3 o, vec3 d, vec3 c, vec3 axis, vec3 side, float real, float width, float sweep, float tMax,
+                      out float t, out vec3 n, out float w)
+        {
+            n = vec3(0.0);
+            w = 0.0;
+            float bend = length(axis);
+            vec3 oc = o - c;
+            float b = dot(oc, d);
+            // The bounding sphere, for the most the tube could be fattened (fatten() can only give less), so the
+            // quick rejection comes before the frame below is built.
+            float reach = bend + real + min(width, MAX_CONE);
+            float disc = b * b - (dot(oc, oc) - reach * reach);
+            t = 0.0;
+            if (disc < 0.0) return false;
+            float tEnd = min(-b + sqrt(disc), tMax);
+            t = max(-b - sqrt(disc), TRACE_MIN_T);
+            if (t >= tEnd) return false;
+
+            // A frame for the SDF: +y along the middle of the arc (radial at half the sweep), +x along the tube
+            // there, +z the torus axis.
+            vec3 e1 = axis / bend;
+            vec3 e2 = normalize(side);
+            vec3 bn = cross(e1, e2);
+            float ha = 0.5 * sweep;
+            // A full ring has a half-angle of pi. Written as (sin pi, cos pi) that's (-8.7e-8, -1) in float, and the
+            // capped-torus test in sdCappedTorus() then fires for points on one side, measuring to an "end point"
+            // that isn't there and overestimating the distance: a thin sliver of the ring went missing. (0, -1)
+            // never fires the test, and the SDF is exactly a plain torus.
+            vec2 sc = sweep > 6.2 ? vec2(0.0, -1.0) : vec2(sin(ha), cos(ha));
+            mat3 toLocal = transpose(mat3(e1 * sc.y + e2 * sc.x, -e2 * sc.y + e1 * sc.x, bn));
+            vec3 lo = toLocal * oc;
+            vec3 ld = toLocal * d;
+            // The origin's signed distance to the real tube. A ray that starts inside it would "hit" it straight
+            // away: skip the piece. (Only the real tube: fatten() keeps the fattened one clear of the origin, so a
+            // ray leaving a bend's inner side can still find the same bend across the curve.)
+            float room = sdCappedTorus(lo, sc, bend, real);
+            if (room < 0.0) return false;
+            w = fatten(width, room);
+            float r = real + w;
+            for (int i = 0; i < ELBOW_STEPS; i++)
+            {
+                float dist = sdCappedTorus(lo + ld * t, sc, bend, r);
+                if (dist < 1e-3)
+                {
+                    // The torus normal: from the nearest point on the centre circle out through the hit point.
+                    vec3 rel = oc + d * t;
+                    vec3 inPlane = rel - bn * dot(rel, bn);
+                    n = normalize(rel - normalize(inPlane) * bend);
+                    return true;
+                }
+                t += dist;
+                if (t >= tEnd) return false;
+            }
+            return false;
+        }
+
+        // One grid entry against the ray: does it hit nearer than tMax? The piece is fattened by the ray cone's
+        // radius where it passes (cone = the cone's radius per unit along the ray; see environment()), and cover
+        // says how much of the cone the real piece fills: radius / (radius + the width actually added). The
+        // fattening stops at MAX_CONE: a piece is only listed in the grid cells it really touches, and much fatter
+        // it would reach into cells the ray walks without finding it there. A cone wider than that would slip
+        // between pieces that should have filled it, and the noise would be back, so cover fades to 0 as the cone
+        // gets there (by the width the cone asks for): what's reflected that small is left to the sky. The
+        // fattening also never reaches the ray's origin (fatten()); each hit function works out how much it can
+        // add, and hands it back as w.
+        bool hitPiece(uint entry, vec3 o, vec3 d, float cone, float tMax, out float t, out vec3 n, out float cover)
+        {
+            uint kind = entry >> 24u;
+            int base = int(entry & 0xFFFFFFu) * 5;
+            vec4 t0 = pieceTexel(kind, base); // start.xyz, axis.x
+            vec4 t3 = pieceTexel(kind, base + 3); // radius, sweep, metallic, roughness
+            vec4 t1 = kind == 1u ? vec4(0.0) : pieceTexel(kind, base + 1); // axis.yz, side.xy
+            vec3 axis = vec3(t0.w, t1.xy);
+            // How far along the ray the piece is (roughly: its middle), to size the cone there.
+            vec3 middle = kind == 0u ? t0.xyz + axis * 0.5 : t0.xyz;
+            float width = cone * max(dot(middle - o, d), 0.0);
+            float real = t3.x;
+            float w;
+            bool hit;
+            if (kind == 1u)
+            {
+                hit = hitSphere(o, d, t0.xyz, real, width, tMax, t, w);
+                n = normalize(o + d * t - t0.xyz);
+            }
+            else if (kind == 0u) hit = hitCylinder(o, d, t0.xyz, axis, real, width, tMax, t, n, w);
+            else
+            {
+                vec3 side = vec3(t1.zw, pieceTexel(kind, base + 2).x);
+                hit = hitTorus(o, d, t0.xyz, axis, side, real, width, t3.y, tMax, t, n, w);
+            }
+            cover = real / (real + w) * (1.0 - smoothstep(0.5 * MAX_CONE, MAX_CONE, width));
+            return hit;
+        }
+
+        // Trace a ray through the grid and find the nearest piece it hits.
+        // The walk is Amanatides & Woo's 3D DDA ("digital differential analyser"), the standard way to visit exactly
+        // the cells a ray passes through, in order. For each axis keep tMax, how far along the ray its next cell
+        // wall is, and tDelta, how far apart that axis's walls are along the ray. Each step crosses whichever wall
+        // is nearest, moving one cell along that axis. No cell is skipped and none is visited twice.
+        // A piece can span several cells, and its hit may lie in a later cell than the one being searched. But once
+        // the best hit so far is nearer than the current cell's exit, no later cell can hold anything nearer: stop.
+        bool tracePipes(vec3 o, vec3 d, float cone, out Hit hit)
+        {
+            hit = Hit(0.0, vec3(0.0), vec3(0.0), 0.0, 1.0, 0.0);
+            if (uGridSize.x == 0) return false;
+
+            // Clip the ray to the grid's box (the slab test): on each axis, the stretch of t between the two
+            // planes; the ray is in the box where all three overlap. A zero component would divide by zero, so it
+            // gets a tiny slope instead.
+            vec3 dd = vec3(abs(d.x) < 1e-6 ? 1e-6 : d.x, abs(d.y) < 1e-6 ? 1e-6 : d.y, abs(d.z) < 1e-6 ? 1e-6 : d.z);
+            vec3 inv = 1.0 / dd;
+            vec3 lo = vec3(uGridOrigin) - 0.5;
+            vec3 ta = (lo - o) * inv, tb = (lo + vec3(uGridSize) - o) * inv;
+            vec3 tNear = min(ta, tb), tFar = max(ta, tb);
+            float tEnter = max(max(tNear.x, tNear.y), max(tNear.z, 0.0));
+            float tExit = min(min(tFar.x, tFar.y), tFar.z);
+            if (tEnter >= tExit) return false; // never enters the grid
+
+            // The first cell, the direction to step on each axis, and the distances to the first walls.
+            ivec3 cell = clamp(ivec3(floor(o + d * tEnter + 0.5)) - uGridOrigin, ivec3(0), uGridSize - 1);
+            ivec3 stepDir = ivec3(sign(dd));
+            vec3 tMax = (vec3(uGridOrigin + cell) + 0.5 * vec3(stepDir) - o) * inv;
+            vec3 tDelta = abs(inv);
+
+            float best = 1e30;
+            vec3 bestN = vec3(0.0);
+            float bestCover = 0.0;
+            uint bestEntry = 0u;
+            bool found = false;
+            for (int i = 0; i < MAX_TRACE_CELLS; i++)
+            {
+                uvec2 range = texelFetch(uCells, cell.x + uGridSize.x * (cell.y + uGridSize.y * cell.z)).xy;
+                for (uint e = 0u; e < range.y; e++)
+                {
+                    uint entry = texelFetch(uEntries, int(range.x + e)).r;
+                    float t, cover;
+                    vec3 n;
+                    if (hitPiece(entry, o, d, cone, best, t, n, cover))
+                    {
+                        best = t;
+                        bestN = n;
+                        bestCover = cover;
+                        bestEntry = entry;
+                        found = true;
+                    }
+                }
+                float cellExit = min(tMax.x, min(tMax.y, tMax.z));
+                if (best <= cellExit || cellExit >= tExit) break;
+                if (tMax.x <= tMax.y && tMax.x <= tMax.z) { cell.x += stepDir.x; tMax.x += tDelta.x; }
+                else if (tMax.y <= tMax.z)                { cell.y += stepDir.y; tMax.y += tDelta.y; }
+                else                                      { cell.z += stepDir.z; tMax.z += tDelta.z; }
+                // Leaving the grid (tExit should catch it first; this guards against rounding).
+                if (any(lessThan(cell, ivec3(0))) || any(greaterThanEqual(cell, uGridSize))) break;
+            }
+            if (!found) return false;
+
+            // Only the winner's material is read.
+            uint kind = bestEntry >> 24u;
+            int base = int(bestEntry & 0xFFFFFFu) * 5;
+            vec4 colour = pieceTexel(kind, base + 2);   // side.z, colour.rgb
+            vec4 material = pieceTexel(kind, base + 3); // radius, sweep, metallic, roughness
+            hit = Hit(best, bestN, colour.yzw, material.z, material.w, bestCover);
+        #if SURFACES
+            // Reflected pipes are drawn flat, without their surface pattern. Three surfaces don't use the palette
+            // colour at all, though, and would reflect as some unrelated paint colour: give them their own.
+            vec4 surf = pieceTexel(kind, base + 4); // surface kind, seed, wear
+            int surface = int(surf.x + 0.5);
+            if (surface == 6) // Patina: copper, greener with wear
+            {
+                hit.albedo = mix(vec3(0.93, 0.56, 0.4), vec3(0.10, 0.45, 0.38), surf.z * 0.7);
+                hit.metallic = 1.0 - surf.z * 0.7;
+            }
+            else if (surface == 7) hit.albedo = vec3(0.6);  // Galvanized zinc
+            else if (surface == 8) hit.albedo = vec3(0.04); // CastIron
+        #endif
+            return true;
+        }
+
+        // Light a reflected pipe, simply: flat material, Lambert diffuse from both lights (the key light shadowed
+        // with the shadow map), the hemisphere ambient, and for metal a cheap second bounce: the sky it would
+        // mirror, tinted by its colour. Without that, metal seen in metal would be black (it has no diffuse). No
+        // highlights, no AO, and the second bounce never traces again. Then fog, for the part of the path the pixel
+        // doesn't already pay for (see the end).
+        vec3 shadeHit(vec3 o, vec3 d, Hit h)
+        {
+            vec3 p = o + d * h.t;
+            vec3 n = dot(h.n, d) > 0.0 ? -h.n : h.n;
+            vec3 key = vec3(2.6, 2.45, 2.25) * keyLightVisibilityAt(p, n) * max(dot(n, uKeyLight), 0.0);
+            vec3 fill = vec3(0.45, 0.55, 0.8) * max(dot(n, uFillLight), 0.0);
+            vec3 hemi = mix(vec3(0.03, 0.03, 0.04), vec3(0.16, 0.18, 0.24), n.y * 0.5 + 0.5);
+            vec3 color = h.albedo * (1.0 - h.metallic) * (key + fill)
+                       + h.albedo * hemi * (1.0 - h.metallic * 0.7)
+                       + sky(reflect(d, n), h.rough) * h.albedo * h.metallic * 2.4 * mix(1.0, 0.6, h.rough);
+            // The light from the hit travels to this pixel and on to the camera, so it should be fogged by the total
+            // distance: fTot, with main()'s formula f(d) = clamp(1 - exp(-k d^2), 0, 0.85). But main() fogs this
+            // pixel anyway, reflection included, by fCam over camera-to-pixel; fogging by fTot here as well counted
+            // that first stretch twice. Two fog steps in a row leave (1 - fExtra)(1 - fCam) of the colour, so for
+            // that to come to 1 - fTot, this step adds only fExtra = 1 - (1 - fTot) / (1 - fCam). (f stops at 0.85,
+            // so 1 - fCam >= 0.15 and the division is safe.)
+            float distCam = length(uCameraPos - vWorld);
+            float dist = distCam + h.t;
+            float fCam = clamp(1.0 - exp(-uFogDensity * distCam * distCam), 0.0, 0.85);
+            float fTot = clamp(1.0 - exp(-uFogDensity * dist * dist), 0.0, 0.85);
+            float fExtra = 1.0 - (1.0 - fTot) / (1.0 - fCam);
+            return mix(color, uFogColor, fExtra);
+        }
+        #endif
+
+        // What a surface mirrors in direction R: the fake sky, or (with TRACED) the pipe a reflection ray hits.
+        // weight says how visible the reflection will be (the Fresnel reflectance times the metal boost), so rays
+        // are only fired where they'd show: metal always, paint only at grazing angles. Rough surfaces would blur
+        // their reflection; this doesn't attempt that beyond fading the traced pipe back towards the sky's soft strips.
+        vec3 environment(vec3 R, float rough, float weight)
+        {
+            vec3 env = sky(R, rough);
+        #if TRACED
+            // The ray cone. One ray per pixel stands for every direction the pixel reflects, and a curved mirror
+            // spreads those wide: across a pipe 12 pixels wide, R swings through 180 degrees, so each pixel sees
+            // about 15 degrees of the scene. A thin pipe reflected smaller than that is hit by one pixel's ray and
+            // missed by the next, which sparkles. So each ray is treated as a cone reaching out to the next pixel's
+            // ray (neighbouring cones overlap, which smooths better than cones that only just touch). Pieces are
+            // fattened by the cone's radius where they pass it (hitPiece()), so every pixel whose cone touches a thin
+            // pipe finds it, and it's blended in by how much of the cone it actually fills. Thin, distant reflections
+            // come out as soft, faint streaks instead of noise: a blurred, "mipmapped" version of the reflection. The
+            // gap is how much R changes to the next pixel; derivatives have to be taken here, before any branch.
+            vec3 dRx = dFdx(R), dRy = dFdy(R);
+            float cone = sqrt(max(dot(dRx, dRx), dot(dRy, dRy))); // radius per unit of distance
+
+            // Fade in over a small range of weight rather than switching at a threshold, so there's no visible edge
+            // where paint at a grazing angle starts to trace.
+            float gate = smoothstep(0.2, 0.3, weight) * (1.0 - smoothstep(0.35, 0.75, rough));
+            if (gate > 0.0)
+            {
+                // A bumped normal can tip R below the actual surface, and the ray would hit its own pipe: keep the
+                // traced ray just above it.
+                float below = dot(R, gNgeo);
+                vec3 Rt = below < 0.02 ? normalize(R + gNgeo * (0.02 - below)) : R;
+                vec3 o = vWorld + gNgeo * 0.01;
+                Hit h;
+                if (tracePipes(o, Rt, cone, h))
+                    env = mix(env, shadeHit(o, Rt, h), gate * h.cover);
+            }
+        #endif
+            return env;
+        }
+
         void main()
         {
             vec3 Ngeo = normalize(vNormal);
             vec3 V = normalize(uCameraPos - vWorld);
             if (dot(Ngeo, V) < 0.0) Ngeo = -Ngeo; // seeing the inside of something (e.g. a spout): light it as the front
+        #if TRACED
+            gNgeo = Ngeo;
+        #endif
             float ao = uUseAO == 1 ? texture(uAO, gl_FragCoord.xy * uInvViewport).r : 1.0;
 
             // Two versions of the lighting, picked when the shader is compiled (see SURFACES above). Each one works
@@ -617,7 +1040,8 @@ internal static class Shaders
             vec3 ambient = s.albedo * hemi * (1.0 - s.metallic * 0.7);
             vec3 R = reflect(-V, N);
             vec3 Fenv = F0 + (max(vec3(1.0 - roughIso), F0) - F0) * pow(1.0 - NdotV, 5.0);
-            vec3 reflection = sky(R, roughIso) * Fenv * mix(0.5, 2.4, s.metallic) * mix(1.0, 0.6, roughIso);
+            vec3 env = environment(R, roughIso, max(Fenv.r, max(Fenv.g, Fenv.b)) * mix(0.5, 2.4, s.metallic));
+            vec3 reflection = env * Fenv * mix(0.5, 2.4, s.metallic) * mix(1.0, 0.6, roughIso);
         #else
             // The original look: one flat colour, metalness and roughness per pipe, and a Blinn-Phong highlight.
             // This is the shading from before the procedural surfaces, kept as it was.
@@ -654,7 +1078,8 @@ internal static class Shaders
             vec3 hemi = mix(vec3(0.03, 0.03, 0.04), vec3(0.16, 0.18, 0.24), N.y * 0.5 + 0.5);
             vec3 ambient = base * hemi * (1.0 - metal * 0.7);
             vec3 R = reflect(-V, N);
-            vec3 reflection = sky(R, rough) * F * mix(0.5, 2.4, metal) * mix(1.0, 0.6, rough);
+            vec3 env = environment(R, rough, max(F.r, max(F.g, F.b)) * mix(0.5, 2.4, metal));
+            vec3 reflection = env * F * mix(0.5, 2.4, metal) * mix(1.0, 0.6, rough);
         #endif
 
             vec3 color = direct * mix(1.0, ao, 0.5) + ambient * ao + reflection * ao;

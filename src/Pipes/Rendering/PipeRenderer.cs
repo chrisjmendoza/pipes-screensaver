@@ -7,15 +7,16 @@ namespace Pipes.Rendering;
 
 /// <summary>
 /// How the renderer is set up. Fixed for the renderer's lifetime. <see cref="Classic"/> is the lite mode, which
-/// turns every effect off regardless of the other switches. <see cref="Surfaces"/> picks which version of the modern
-/// pipe shader to compile: procedural surfaces, or the original flat shading.
+/// turns every effect off regardless of the other switches. <see cref="Surfaces"/> and <see cref="Traced"/> pick
+/// which variant of the modern pipe shader to compile: procedural surfaces or the original flat shading, and with
+/// or without traced reflections.
 /// </summary>
 internal readonly record struct RenderOptions(
-    int Samples, bool AmbientOcclusion, bool Bloom, bool DepthOfField, bool Shadows, bool Classic, bool Surfaces)
+    int Samples, bool AmbientOcclusion, bool Bloom, bool DepthOfField, bool Shadows, bool Classic, bool Surfaces, bool Traced)
 {
     public static RenderOptions From(PipesSettings s) => s.Style == GraphicsStyle.Classic
-        ? new(s.Antialiasing, false, false, false, false, Classic: true, Surfaces: false)
-        : new(s.Antialiasing, s.AmbientOcclusion, s.Bloom, s.DepthOfField, s.Shadows, Classic: false, s.SurfaceDetail);
+        ? new(s.Antialiasing, false, false, false, false, Classic: true, Surfaces: false, Traced: false)
+        : new(s.Antialiasing, s.AmbientOcclusion, s.Bloom, s.DepthOfField, s.Shadows, Classic: false, s.SurfaceDetail, s.TracedReflections);
 }
 
 /// <summary>
@@ -29,7 +30,8 @@ internal readonly record struct RenderOptions(
 /// <item><b>Shadow map</b> (optional): depth as seen from the key light.</item>
 /// <item><b>Geometry prepass</b> (only if AO is on, or DoF is on and blurring): normals + depth into textures.</item>
 /// <item><b>SSAO</b> + <b>blur</b> (optional): how enclosed each pixel is, used by the next pass to darken ambient light.</item>
-/// <item><b>Scene</b>: background and lit pipes into a multisampled, HDR (16-bit float) buffer.</item>
+/// <item><b>Scene</b>: background and lit pipes into a multisampled, HDR (16-bit float) buffer. With traced
+/// reflections, the pipes' depth is drawn first (a depth prepass), so only visible pixels pay for a reflection ray.</item>
 /// <item><b>Resolve</b>: average the MSAA samples into a plain texture.</item>
 /// <item><b>Depth of field</b> (optional, and skipped in flight): blur by distance from the focus plane.</item>
 /// <item><b>Bloom</b> (optional): downsample/upsample chain for the glow.</item>
@@ -99,6 +101,9 @@ internal sealed unsafe class PipeRenderer : IDisposable
     private readonly uint _shadowFbo, _shadowTex;
     private readonly uint _emptyVao;
     private readonly MeshBuffers[] _meshes = new MeshBuffers[PieceLists.KindCount];
+
+    /// <summary>The scene grid reflection rays walk through (traced reflections only, otherwise null).</summary>
+    private readonly ReflectionGrid? _grid;
     private readonly int[] _instanceCounts = new int[PieceLists.KindCount];
 
     /// <summary>
@@ -143,8 +148,16 @@ internal sealed unsafe class PipeRenderer : IDisposable
             return;
         }
 
-        _pipeProgram = Program(Shaders.PipeVertex, Shaders.WithDefine(Shaders.PipeFragment, "SURFACES", options.Surfaces ? 1 : 0));
-        _geometryProgram = Program(Shaders.PipeVertex, Shaders.GeometryFragment);
+        // Two switches, so two defines: WithDefine puts each straight after the #version line. The vertex shader
+        // gets TRACED too: with it, gl_Position is "invariant", so the depth prepass (drawn by _shadowProgram,
+        // compiled the same way below) and this program agree on depth to the bit. See ScenePass.
+        var pipeVertex = Shaders.WithDefine(Shaders.PipeVertex, "TRACED", options.Traced ? 1 : 0);
+        _pipeProgram = Program(pipeVertex, Shaders.WithDefine(
+            Shaders.WithDefine(Shaders.PipeFragment, "SURFACES", options.Surfaces ? 1 : 0), "TRACED", options.Traced ? 1 : 0));
+        // The geometry prepass gets the same vertex shader. It needn't match the lit pass's depth (only SSAO and
+        // depth of field read it), but every use of PipeVertex must define TRACED: unlike C, GLSL treats an
+        // undefined name in #if as an error (NVIDIA lets it through, other drivers may not).
+        _geometryProgram = Program(pipeVertex, Shaders.GeometryFragment);
         _bgProgram = Program(Shaders.FullscreenVertex, Shaders.BackgroundFragment);
         _postProgram = Program(Shaders.FullscreenVertex, Shaders.PostFragment);
         _ssaoProgram = Program(Shaders.FullscreenVertex, Shaders.SsaoFragment);
@@ -161,12 +174,21 @@ internal sealed unsafe class PipeRenderer : IDisposable
 
         _ssaoKernel = BuildSsaoKernel();
 
-        if (options.Shadows)
-        {
-            _shadowProgram = Program(Shaders.PipeVertex, Shaders.ShadowFragment);
-            (_shadowFbo, _shadowTex) = CreateShadowMap();
-        }
+        // The depth-only program draws the shadow map, and the depth prepass for traced reflections.
+        if (options.Shadows || options.Traced) _shadowProgram = Program(pipeVertex, Shaders.ShadowFragment);
+        if (options.Shadows) (_shadowFbo, _shadowTex) = CreateShadowMap();
+
+        if (options.Traced) _grid = new ReflectionGrid(gl, [.. _meshes.Select(m => m.InstanceVbo)]);
     }
+
+    /// <summary>
+    /// Average CPU time to build the reflection grid, in milliseconds per frame, or null without traced reflections.
+    /// For /bench's report.
+    /// </summary>
+    public double? AverageGridBuildMilliseconds => _grid is { Builds: > 0 } g ? g.BuildMilliseconds / g.Builds : null;
+
+    /// <summary>Start the grid-build statistics afresh (/bench, after its warm-up). Nothing without traced reflections.</summary>
+    public void ResetGridStats() => _grid?.ResetStats();
 
     /// <summary>Which vertex-shader path (uMode) draws each kind of mesh.</summary>
     private static int ShaderMode(MeshKind kind) => kind switch
@@ -242,6 +264,8 @@ internal sealed unsafe class PipeRenderer : IDisposable
     public void Render(Camera camera, PieceLists pieces, float fade, uint targetFbo, int targetX = 0, int targetY = 0)
     {
         UploadInstances(pieces);
+        // After the instances: the shader reads the pieces straight out of their instance buffers.
+        _grid?.Build(pieces, camera.ShadowCentre);
 
         if (_options.Classic)
         {
@@ -416,6 +440,24 @@ internal sealed unsafe class PipeRenderer : IDisposable
         _gl.DepthMask(true);
         _gl.Disable(EnableCap.CullFace); // spout openings are visible from inside; the shader flips back-facing normals
 
+        if (_grid != null)
+        {
+            // Depth prepass. Normally a fragment hidden behind a nearer pipe is shaded and then overwritten, which
+            // is only a waste of cheap shading. With traced reflections every fragment fires a ray, and in the
+            // tunnel pipes overlap many layers deep. So draw every piece's depth first (no colour), then shade with
+            // the depth test at "equal or nearer": only the frontmost surface at each sample passes. Both draws use
+            // the same vertex shader, so the depths match exactly, per sample with MSAA. (GLSL only promises that
+            // across two programs for outputs declared "invariant", and with TRACED the vertex shader declares
+            // gl_Position so: see the constructor.)
+            _gl.ColorMask(false, false, false, false);
+            _gl.UseProgram(_shadowProgram);
+            SetMatrix(_shadowProgram, "uViewProj", camera.View * camera.Projection);
+            DrawPieces(_shadowProgram);
+            _gl.ColorMask(true, true, true, true);
+            _gl.DepthFunc(DepthFunction.Lequal);
+            _gl.DepthMask(false);
+        }
+
         _gl.UseProgram(_pipeProgram);
         SetMatrix(_pipeProgram, "uViewProj", camera.View * camera.Projection);
         SetVector(_pipeProgram, "uCameraPos", camera.Position);
@@ -439,7 +481,14 @@ internal sealed unsafe class PipeRenderer : IDisposable
             // Samplers of different types (sampler2D, sampler2DShadow) mustn't share a texture unit, even unused.
             _gl.Uniform1(Loc(_pipeProgram, "uShadowMap"), 1);
         }
+        _grid?.Bind(_pipeProgram);
         DrawPieces(_pipeProgram);
+
+        if (_grid != null)
+        {
+            _gl.DepthFunc(DepthFunction.Less);
+            _gl.DepthMask(true);
+        }
     }
 
     private void DepthOfFieldPass(Camera camera, uint image)
@@ -775,6 +824,7 @@ internal sealed unsafe class PipeRenderer : IDisposable
     public void Dispose()
     {
         DeleteTargets();
+        _grid?.Dispose();
         foreach (var m in _meshes)
         {
             _gl.DeleteVertexArray(m.Vao);
