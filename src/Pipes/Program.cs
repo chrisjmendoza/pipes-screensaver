@@ -13,6 +13,9 @@ namespace Pipes;
 ///   /shot &lt;file.png&gt; [seconds] [width] [height] [seed] [monitors]   render one frame offscreen and exit
 ///   /bench &lt;report.txt&gt; [frames] [width] [height] [monitors]        time rendering offscreen, write ms/frame
 /// Adding the word "monitors" to either uses the real fullscreen monitor layout instead of width x height.
+/// Used by the settings dialog:
+///   /autotune &lt;result.json&gt;    "Test this PC": time each quality preset on the real desktop, write the results
+///                               (run in a child process, so a graphics driver crash can't take the dialog down)
 /// </summary>
 internal static class Program
 {
@@ -44,6 +47,11 @@ internal static class Program
                 case "bench":
                     Benchmark(args, settings);
                     break;
+                case "autotune":
+                    // Started by the settings dialog in a separate process (see Autotune.RunAsync), with the dialog's
+                    // unsaved settings passed in through PIPES_SETTINGS.
+                    Autotune(args, settings);
+                    break;
                 default: // "c", no arguments, or anything unrecognised
                     ApplicationConfiguration.Initialize();
                     Application.Run(new ConfigForm(settings));
@@ -51,7 +59,7 @@ internal static class Program
             }
             return 0;
         }
-        catch (Exception ex) when (command is not ("shot" or "bench"))
+        catch (Exception ex) when (command is not ("shot" or "bench" or "autotune"))
         {
             // A screensaver has no console; surface failures instead of silently showing nothing.
             MessageBox.Show(ex.Message, "Pipes screensaver", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -90,6 +98,13 @@ internal static class Program
 
         using var host = GLHost.CreateOffscreen();
         host.Benchmark(settings, width, height, frames, path, monitors);
+    }
+
+    private static void Autotune(string[] args, PipesSettings settings)
+    {
+        var path = Path.GetFullPath(args.Length > 1 ? args[1] : "autotune.json");
+        using var host = GLHost.CreateOffscreen();
+        host.Autotune(settings, path);
     }
 
     private static bool HasFlag(string[] args, string flag) => args.Any(a => a.Equals(flag, StringComparison.OrdinalIgnoreCase));

@@ -122,6 +122,12 @@ internal sealed class Scene
 
     private bool Airborne => _tunnel is { Flying: true };
 
+    /// <summary>
+    /// Fly-through only: the camera has taken off and is flying down the tunnel. /autotune waits for this, so it
+    /// measures the tunnel (many more pieces) rather than the box being built.
+    /// </summary>
+    public bool Flying => Airborne;
+
     /// <summary>Flight speed in world units (grid cells) per second.</summary>
     private float FlySpeed => _settings.FlightSpeed;
 

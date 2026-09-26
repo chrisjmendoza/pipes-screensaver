@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Pipes.Native;
 
 namespace Pipes.Diagnostics;
 
@@ -14,8 +15,8 @@ internal static class DisplayInfo
         var monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
         var info = new MONITORINFOEX { cbSize = (uint)Marshal.SizeOf<MONITORINFOEX>() };
         if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref info)) return 60;
-        var mode = new DEVMODE { dmSize = (ushort)Marshal.SizeOf<DEVMODE>() };
-        return EnumDisplaySettings(info.szDevice, ENUM_CURRENT_SETTINGS, ref mode) && mode.dmDisplayFrequency > 1
+        var mode = new Win32.DEVMODE { dmSize = (ushort)Marshal.SizeOf<Win32.DEVMODE>() };
+        return Win32.EnumDisplaySettings(info.szDevice, Win32.ENUM_CURRENT_SETTINGS, ref mode) && mode.dmDisplayFrequency > 1
             ? (int)mode.dmDisplayFrequency
             : 60;
     }
@@ -31,7 +32,6 @@ internal static class DisplayInfo
     }
 
     private const uint MONITOR_DEFAULTTONEAREST = 2;
-    private const int ENUM_CURRENT_SETTINGS = -1;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct MONITORINFOEX
@@ -43,24 +43,7 @@ internal static class DisplayInfo
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szDevice;
     }
 
-    /// <summary>The display flavour of DEVMODEW (the printer fields share space with the position ones).</summary>
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct DEVMODE
-    {
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
-        public ushort dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra;
-        public uint dmFields;
-        public int dmPositionX, dmPositionY;
-        public uint dmDisplayOrientation, dmDisplayFixedOutput;
-        public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
-        public ushort dmLogPixels;
-        public uint dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
-        public uint dmICMMethod, dmICMIntent, dmMediaType, dmDitherType, dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight;
-    }
-
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetMonitorInfoW")] private static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFOEX info);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "EnumDisplaySettingsW")] private static extern bool EnumDisplaySettings(string deviceName, int modeNum, ref DEVMODE mode);
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
 }

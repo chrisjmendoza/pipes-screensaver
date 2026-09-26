@@ -30,6 +30,11 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
   like a spaceship: whichever way up a maneuver leaves it becomes the new level. Flight speed is adjustable (and
   the pilot can vary it), a course complexity slider goes from zen cruising to wild, maneuver after maneuver, and a
   tunnel density slider sets how full the walls are (the setting to turn down on a slower GPU).
+- **Quality presets:** a Quality dropdown in the settings (Lite, Low, Medium, High, Ultra) sets all the graphics
+  options at once, from the classic style up to traced reflections and 8x MSAA, without touching the pipes or the
+  camera. **Test this PC…** next to it times each preset on your screens at their refresh rate and recommends the
+  highest one that keeps up, with room to spare. (On a laptop it also warns if it ran on the integrated graphics
+  chip rather than the graphics card.)
 - **Classic (lite) mode:** for nostalgia, or a slower PC. It renders like the 1990s original: low-poly pipes lit
   per vertex on a black background, no effects. It uses roughly a tenth of the GPU time of the modern style.
 - **Multi-monitor aware:** each monitor gets its own scene, framed for its shape (portrait monitors too), and
@@ -106,6 +111,7 @@ an elevated PowerShell. That copies it to System32 so "Pipes" appears in the Scr
 | `/w` | Windowed (dev) |
 | `/shot <png> [s] [w] [h] [seed] [monitors]` | Offscreen still (dev) |
 | `/bench <txt> [frames] [w] [h] [monitors]` | Time rendering, write ms/frame (dev) |
+| `/autotune <json>` | "Test this PC": time each quality preset on the real desktop, write a JSON report (used by the settings dialog) |
 
 Settings are stored at `%LOCALAPPDATA%\PipesScreensaver\settings.json`.
 
@@ -119,6 +125,9 @@ src/Pipes/
   Scene.cs                scene lifecycle (fade in, grow, hold, fly, fade out); camera motion
   PipesSettings.cs        settings model + JSON persistence
   ConfigForm.cs           settings dialog (WinForms, code-only)
+  QualityPresets.cs       the Lite/Low/Medium/High/Ultra graphics presets
+  Autotune.cs             "Test this PC": its rules, its JSON report, and running /autotune in a child process
+  AutotuneDialogs.cs      the test's progress and results windows
   Simulation/
     PipeWorld.cs          grid walk rules, bends, fittings, tees, colours, length budget, chunks
     PipeSpace.cs          where pipes may grow: the IPipeSpace interface and the classic box
