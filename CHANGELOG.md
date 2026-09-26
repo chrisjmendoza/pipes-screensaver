@@ -31,8 +31,8 @@ Changes merged to `main` since the last release go here, and move under a new ve
   reported as keeping up with little to spare, not as "too slow" — at 60 Hz, 12.6 ms a frame is about 80 fps and
   misses nothing — and only a preset that can't hold the refresh at all is called too slow. Testing stops there
   too, rather than at the headroom mark, so the levels either side of it still get measured. Shows the results per
-  preset and which graphics chip was used, with a hint for laptops that ran it on the integrated chip. The test runs in a separate process, so a graphics driver crash just fails the
-  test instead of closing the settings. (docs/ARCHITECTURE.md, "Test this PC")
+  preset and which graphics chip was used, with a hint for laptops that ran it on the integrated chip. The test
+  runs in a separate process, so a graphics driver crash just fails the test instead of closing the settings. (docs/ARCHITECTURE.md, "Test this PC")
 - `/autotune <result.json>` command behind the button, which writes the measurements as JSON.
 - **On battery** dropdown next to Quality: while a laptop runs on its battery, hold the graphics settings down to
   a preset of your choosing, and let go again when it's plugged back in. Off by default. It's a ceiling rather than

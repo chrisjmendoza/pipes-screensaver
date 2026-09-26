@@ -624,7 +624,10 @@ so they get the cap applied; a custom mix can be arbitrarily expensive, and on b
 Low" is to mean it.
 
 Only the graphics settings move, because that's all a preset touches: unplugging changes what a frame costs, never
-what the pipes are or where the camera goes.
+what the pipes are or where the camera goes. That takes one care in `GLHost.Run`: the capped copy goes to the
+renderers (`View`'s `renderSettings`) and to the stats overlay's footer, while the scenes get the user's own
+settings. The scene does read the graphics settings, to pick plain materials when surface detail is off, so given
+the capped copy a session started on battery would keep growing plain pipes after the lead went back in.
 
 `PowerSource.OnBattery` wraps `GetSystemPowerStatus`. A machine with no battery (`BATTERY_FLAG_NO_BATTERY`), and
 anything it can't read, counts as mains: this setting is a power saving, and guessing "battery" wrong would quietly
@@ -705,8 +708,8 @@ The report is JSON (the `AutotuneReport` record):
 ```
 
 `AutotuneResultsForm` shows it as a table (preset, frame time, fps, and ✓, "✓ little to spare" or "too slow"), the
-budget line, and the `GL_RENDERER` string. If that names an Intel chip or Windows' software renderer, it adds a note: on laptops with
-switchable graphics, Windows often runs small programs on the integrated chip unless told otherwise in Settings >
+budget line, and the `GL_RENDERER` string. If that names an Intel chip or Windows' software renderer, it adds a
+note: on laptops with switchable graphics, Windows often runs small programs on the integrated chip unless told otherwise in Settings >
 System > Display > Graphics. **Use High** (or whichever) sets the Quality dropdown; as with everything in the
 dialog, nothing is saved until OK. If the child exits with an error code, times out, or leaves no readable report,
 a message box says so and suggests a lower preset.

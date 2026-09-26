@@ -13,11 +13,16 @@ namespace Pipes;
 /// </remarks>
 internal sealed class View : IDisposable
 {
-    public View(Silk.NET.OpenGL.GL gl, PipesSettings settings, Random rng, int x, int y, int width, int height)
+    /// <param name="renderSettings">
+    /// What the renderer is built for, when that differs from <paramref name="settings"/>: the "On battery" quality
+    /// ceiling holds the graphics down without touching the scene, which keeps picking its pipes and materials from
+    /// the user's own settings. Null means the same settings for both.
+    /// </param>
+    public View(Silk.NET.OpenGL.GL gl, PipesSettings settings, Random rng, int x, int y, int width, int height, PipesSettings? renderSettings = null)
     {
         X = x;
         Y = y;
-        Renderer = new PipeRenderer(gl, RenderOptions.From(settings));
+        Renderer = new PipeRenderer(gl, RenderOptions.From(renderSettings ?? settings));
         Scene = new Scene(settings, rng);
         Resize(width, height);
         Scene.Start(Aspect);

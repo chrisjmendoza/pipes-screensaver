@@ -130,6 +130,7 @@ src/Pipes/
   PipesSettings.cs        settings model + JSON persistence
   ConfigForm.cs           settings dialog (WinForms, code-only)
   QualityPresets.cs       the Lite/Low/Medium/High/Ultra graphics presets
+  PowerSource.cs          mains or battery, for the "On battery" quality ceiling
   Autotune.cs             "Test this PC": its rules, its JSON report, and running /autotune in a child process
   AutotuneDialogs.cs      the test's progress and results windows
   Simulation/

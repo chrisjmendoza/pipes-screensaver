@@ -45,7 +45,6 @@ internal sealed unsafe class StatsOverlay : IDisposable
 
     private readonly GL _gl;
     private readonly IntPtr _hwnd;
-    private readonly PipesSettings _settings;
     private readonly FrameStats _frames = new();
     private readonly SystemMonitor _system;
     private readonly string _renderer;
@@ -73,7 +72,7 @@ internal sealed unsafe class StatsOverlay : IDisposable
     {
         _gl = gl;
         _hwnd = hwnd;
-        _settings = settings;
+        Settings = settings;
         _renderer = gl.GetStringS(StringName.Renderer) ?? "Unknown GPU";
         Timer = new GpuTimer(gl);
         Timer.FrameMeasured += OnGpuFrame;
@@ -94,6 +93,12 @@ internal sealed unsafe class StatsOverlay : IDisposable
 
     /// <summary>The GPU timer the renderers mark their passes on (<see cref="PipeRenderer.Timer"/>).</summary>
     public GpuTimer Timer { get; }
+
+    /// <summary>
+    /// The settings the renderers are built for, for the panel's footer. Replaced when the "On battery" ceiling
+    /// changes what's drawn, so the footer describes what's actually being measured.
+    /// </summary>
+    public PipesSettings Settings { get; set; }
 
     /// <summary>
     /// Call when the window may have moved to another monitor: picks up that monitor's refresh rate and display
@@ -295,7 +300,7 @@ internal sealed unsafe class StatsOverlay : IDisposable
     /// <summary>The settings that matter for performance, in a line, so a screenshot of the panel says what was measured.</summary>
     private string Describe(int width, int height, int viewCount)
     {
-        var s = _settings;
+        var s = Settings;
         var parts = new List<string> { s.Style == GraphicsStyle.Classic ? "Classic" : "Modern", $"{width}×{height}" };
         if (viewCount > 1) parts.Add($"{viewCount} scenes");
         parts.Add(s.Antialiasing > 0 ? $"{s.Antialiasing}× MSAA" : "no MSAA");
