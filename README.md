@@ -35,6 +35,10 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
   camera. **Test this PC…** next to it times each preset on your screens at their refresh rate and recommends the
   highest one that keeps up, with room to spare. (On a laptop it also warns if it ran on the integrated graphics
   chip rather than the graphics card.)
+- **Easier on a laptop's battery:** an **On battery** dropdown next to Quality holds the graphics down to a preset
+  of your choosing whenever the machine is running on its battery, and lets go again when you plug it back in. It
+  only moves the graphics settings, never the pipes or the camera, and it's a ceiling rather than a setting: running
+  something lighter already, nothing changes. Off by default, and it does nothing on a desktop.
 - **Classic (lite) mode:** for nostalgia, or a slower PC. It renders like the 1990s original: low-poly pipes lit
   per vertex on a black background, no effects. It uses roughly a tenth of the GPU time of the modern style.
 - **Multi-monitor aware:** each monitor gets its own scene, framed for its shape (portrait monitors too), and

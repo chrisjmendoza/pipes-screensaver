@@ -154,6 +154,28 @@ internal static class Win32
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr LoadLibrary(string name);
     [DllImport("kernel32.dll", CharSet = CharSet.Ansi)] public static extern IntPtr GetProcAddress(IntPtr module, string name);
 
+    // ---- Power --------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Mains or battery, for <see cref="PipesSettings.BatteryQuality"/>. Only the two fields we read are documented
+    /// here; the rest are laid out to match the Win32 struct so the call fills it correctly.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SYSTEM_POWER_STATUS
+    {
+        /// <summary>0 on battery, 1 on mains, 255 unknown.</summary>
+        public byte ACLineStatus;
+        /// <summary>Charge bits, plus <see cref="BATTERY_FLAG_NO_BATTERY"/> for a machine with no battery at all.</summary>
+        public byte BatteryFlag;
+        public byte BatteryLifePercent, SystemStatusFlag;
+        public uint BatteryLifeTime, BatteryFullLifeTime;
+    }
+
+    public const byte AC_LINE_OFFLINE = 0;
+    public const byte BATTERY_FLAG_NO_BATTERY = 128;
+
+    [DllImport("kernel32.dll")] public static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS status);
+
     // ---- WGL ----------------------------------------------------------------------------------------
 
     public const uint PFD_DRAW_TO_WINDOW = 0x00000004;

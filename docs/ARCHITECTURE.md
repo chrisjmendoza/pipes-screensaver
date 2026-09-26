@@ -29,7 +29,7 @@ There are three layers, and each only talks to the one below it:
 
 | Layer | Files | Knows about |
 |---|---|---|
-| Host | `Program.cs`, `GLHost.cs`, `View.cs`, `Native/Win32.cs` | Windows: windows, messages, monitors, the OpenGL context, screensaver command-line rules |
+| Host | `Program.cs`, `GLHost.cs`, `View.cs`, `PowerSource.cs`, `Native/Win32.cs` | Windows: windows, messages, monitors, the OpenGL context, mains or battery, screensaver command-line rules |
 | Scene | `Scene.cs`, `Simulation/*` | Pipes, the grid, spaces and flight paths, the camera. **No OpenGL at all.** |
 | Rendering | `Rendering/*` | OpenGL, shaders, meshes. Knows nothing about grids or pipe rules. |
 | Diagnostics | `Diagnostics/*`, `Rendering/StatsOverlay.cs` | The optional stats overlay: frame timing, GPU timer queries, hardware sensors |
@@ -613,6 +613,29 @@ re-derived halfway through applying a preset (or re-applied when it's only being
 that the Lite preset switching the style to Classic doesn't also run the "classic pipes" starting point, which is
 for a user picking the style by hand. One existing rule still applies: turning surface detail off moves a
 Weathered finish to Mixed, because Weathered can't be drawn without it.
+
+### On battery
+
+Under the Quality dropdown is **On battery**: "Don't change" (the default, `BatteryQuality` null) or a preset to
+hold the graphics down to while the machine runs on its battery. It is a *ceiling*, not a setting —
+`QualityPresets.LimitedTo` returns the settings untouched when `Match` already ranks them at or below the cap, so a
+user running Lite with a Low ceiling sees nothing happen. Settings that match no preset ("Custom") can't be ranked,
+so they get the cap applied; a custom mix can be arbitrarily expensive, and on battery the safe reading of "at most
+Low" is to mean it.
+
+Only the graphics settings move, because that's all a preset touches: unplugging changes what a frame costs, never
+what the pipes are or where the camera goes.
+
+`PowerSource.OnBattery` wraps `GetSystemPowerStatus`. A machine with no battery (`BATTERY_FLAG_NO_BATTERY`), and
+anything it can't read, counts as mains: this setting is a power saving, and guessing "battery" wrong would quietly
+downgrade a desktop. `GLHost.Run` polls it every two seconds rather than hooking `SystemEvents.PowerModeChanged`,
+which would need a Windows Forms message pump on a thread that runs a bare Win32 loop. Polling that rarely is free,
+and the answer only changes when someone pulls a plug.
+
+When it does change, the scene stays and only the renderers are rebuilt, through the same `View.ReplaceRenderer`
+that `/autotune` uses to test five presets against one scene. That compiles new shaders, so it costs a hitch of a
+frame or two — acceptable for something that happens when the power lead moves. The stats overlay's GPU timer has
+to be re-attached afterwards, since it belonged to the renderer that was just disposed.
 
 ### "Test this PC": the /autotune command
 
