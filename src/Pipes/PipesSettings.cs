@@ -166,6 +166,19 @@ public sealed class PipesSettings
     /// </summary>
     public bool TracedReflections { get; set; } = false;
 
+    /// <summary>
+    /// On a laptop running on battery, hold the graphics settings down to at most this preset; null (the default)
+    /// leaves them alone. Only the graphics settings move, the same ones a <see cref="QualityPreset"/> sets: the
+    /// pipes, the camera and the rest of the look stay as they are, so unplugging changes the cost, not the scene.
+    /// </summary>
+    /// <remarks>
+    /// A ceiling, not a setting: already running something lighter than this (Lite, say, with a Low ceiling) means
+    /// nothing changes. It applies at start-up and again whenever the power lead comes out or goes back in, and it
+    /// does nothing at all on a machine with no battery. See <see cref="QualityPresets.LimitedTo"/>.
+    /// </remarks>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public QualityPreset? BatteryQuality { get; set; }
+
     // ---- Diagnostics ----
 
     /// <summary>

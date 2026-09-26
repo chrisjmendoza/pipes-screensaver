@@ -69,7 +69,15 @@ internal sealed unsafe class GLHost : IDisposable
         CreateWindow(visible: true);
         var (w, h) = ClientSize();
         var perMonitor = _mode == HostMode.Fullscreen && settings.SeparateMonitors;
-        var views = CreateViews(settings, w, h, perMonitor, _ => new Random());
+
+        // On battery, the graphics settings are held down to PipesSettings.BatteryQuality. Only the renderers see the
+        // difference: the scene is built from the settings the user chose, so unplugging can't change the pipes.
+        var onBattery = PowerSource.OnBattery();
+        PipesSettings Quality(bool battery) => battery && settings.BatteryQuality is { } cap
+            ? QualityPresets.LimitedTo(cap, settings)
+            : settings;
+
+        var views = CreateViews(Quality(onBattery), w, h, perMonitor, _ => new Random());
 
         // Pace frames by sleeping until the monitor's vertical blank, rather than letting the driver wait (which it
         // may do by spinning a CPU core). See VBlankWaiter. Null if unavailable: then the driver paces as before.
@@ -98,6 +106,7 @@ internal sealed unsafe class GLHost : IDisposable
             var clock = Stopwatch.StartNew();
             var last = clock.Elapsed.TotalSeconds;
             var lastPresent = last;
+            var lastPowerCheck = last;
             while (_running)
             {
                 while (Win32.PeekMessage(out var msg, IntPtr.Zero, 0, 0, Win32.PM_REMOVE))
@@ -130,6 +139,24 @@ internal sealed unsafe class GLHost : IDisposable
                 {
                     _toggleStats = false;
                     ShowStats(stats == null);
+                }
+
+                // The power lead coming out (or going back in) changes which quality the renderers are built for.
+                // Swapping them compiles new shaders, so it costs a hitch of a frame or two; it only happens when the
+                // machine actually changes power source, which is rare and deliberate.
+                if (settings.BatteryQuality != null && clock.Elapsed.TotalSeconds - lastPowerCheck >= PowerSource.PollSeconds)
+                {
+                    lastPowerCheck = clock.Elapsed.TotalSeconds;
+                    if (PowerSource.OnBattery() != onBattery)
+                    {
+                        onBattery = !onBattery;
+                        var options = RenderOptions.From(Quality(onBattery));
+                        foreach (var view in views)
+                        {
+                            view.ReplaceRenderer(new PipeRenderer(_gl, options));
+                            view.Renderer.Timer = stats?.Timer; // the old renderer's timer went with it
+                        }
+                    }
                 }
 
                 if (vblank != null && !vblank.Wait())

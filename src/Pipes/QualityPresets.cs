@@ -102,6 +102,19 @@ internal static class QualityPresets
     }
 
     /// <summary>
+    /// <paramref name="settings"/> held down to at most <paramref name="cap"/>: the same settings back if they are
+    /// already that light, otherwise a copy with <paramref name="cap"/> applied. Used for
+    /// <see cref="PipesSettings.BatteryQuality"/>.
+    /// </summary>
+    /// <remarks>
+    /// The presets are declared lightest first, so comparing them as numbers is comparing cost. Settings that match
+    /// no preset ("Custom") can't be ranked against the cap, so they get it applied: a custom mix can be arbitrarily
+    /// expensive, and on battery the safe reading of "at most Low" is to mean it.
+    /// </remarks>
+    public static PipesSettings LimitedTo(QualityPreset cap, PipesSettings settings) =>
+        Match(settings) is { } current && current <= cap ? settings : With(cap, settings);
+
+    /// <summary>
     /// Which preset <paramref name="settings"/> amounts to, or null if none ("Custom"). Any classic-style settings
     /// count as Lite, whatever their anti-aliasing: Lite is "the classic style", and the dialog shouldn't say Custom
     /// just because someone picked 2× for it. A modern preset must match every setting it sets.

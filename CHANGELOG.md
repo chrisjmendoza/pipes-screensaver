@@ -34,6 +34,12 @@ Changes merged to `main` since the last release go here, and move under a new ve
   preset and which graphics chip was used, with a hint for laptops that ran it on the integrated chip. The test runs in a separate process, so a graphics driver crash just fails the
   test instead of closing the settings. (docs/ARCHITECTURE.md, "Test this PC")
 - `/autotune <result.json>` command behind the button, which writes the measurements as JSON.
+- **On battery** dropdown next to Quality: while a laptop runs on its battery, hold the graphics settings down to
+  a preset of your choosing, and let go again when it's plugged back in. Off by default. It's a ceiling rather than
+  a setting, so running something lighter already means nothing changes, and like any preset it moves only the
+  graphics settings — the pipes and the camera stay put. Noticed within two seconds of the lead moving, and applied
+  by rebuilding the renderers around the scene that's already on screen. Does nothing on a machine with no battery.
+  (docs/ARCHITECTURE.md, "On battery")
 
 ## [1.0.0] - 2026-09-26
 

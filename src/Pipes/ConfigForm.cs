@@ -31,6 +31,8 @@ internal sealed class ConfigForm : Form
     // preset's index is (int)preset + 1.
     private readonly ComboBox _quality = Dropdown("Custom", "Lite", "Low", "Medium", "High", "Ultra");
     private readonly Button _testPc = new() { Text = "Test this PC…", AutoSize = true };
+    // Same items as _quality minus "Custom", so this one's index is (int)preset + 1 too, with 0 meaning "leave it".
+    private readonly ComboBox _batteryQuality = Dropdown("Don't change", "Lite", "Low", "Medium", "High", "Ultra");
     private readonly ComboBox _style = Dropdown("Modern", "Classic (lite, like the original)");
     private readonly ComboBox _aa = Dropdown("Off", "2x", "4x", "8x");
     private readonly CheckBox _surfaces = Check("Surface detail (grime, scratches, rust; off = flat)");
@@ -97,6 +99,7 @@ internal sealed class ConfigForm : Form
             ("", _teapots));
         var graphics = Group("Graphics", _rightGroups, _rightLabels,
             ("Quality", QualityRow()),
+            ("On battery", _batteryQuality),
             ("Style", _style),
             ("Anti-aliasing", _aa),
             ("", _surfaces),
@@ -492,6 +495,7 @@ internal sealed class ConfigForm : Form
         _movingLight.Checked = s.MovingLight;
         _traced.Checked = s.TracedReflections;
         _stats.Checked = s.ShowStats;
+        _batteryQuality.SelectedIndex = s.BatteryQuality is { } battery ? (int)battery + 1 : 0;
         UpdateEffectToggles();
     }
 
@@ -528,6 +532,7 @@ internal sealed class ConfigForm : Form
         s.MovingLight = _movingLight.Checked;
         s.TracedReflections = _traced.Checked;
         s.ShowStats = _stats.Checked;
+        s.BatteryQuality = _batteryQuality.SelectedIndex > 0 ? (QualityPreset)(_batteryQuality.SelectedIndex - 1) : null;
         s.Clamped();
     }
 }
