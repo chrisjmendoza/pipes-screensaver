@@ -14,6 +14,13 @@
          settings dialog both pull the same icon back out of the exe (see GLHost.CreateWindow and ConfigForm's
          constructor) rather than embedding it a second time. Regenerate with scripts/make_icon.py. -->
     <ApplicationIcon>Pipes.ico</ApplicationIcon>
+
+    <!-- Release metadata: shows in the file's Properties > Details in Explorer. Bump Version with each GitHub release
+         (and the matching heading in CHANGELOG.md); the release's git tag is "v" + Version. -->
+    <Version>1.0.0</Version>
+    <Product>Pipes</Product>
+    <Description>Pipes screensaver</Description>
+    <Copyright>Copyright (c) 2026 Chris Mendoza</Copyright>
   </PropertyGroup>
 
   <ItemGroup>

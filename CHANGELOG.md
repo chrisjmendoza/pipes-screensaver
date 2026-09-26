@@ -1,16 +1,24 @@
 # Changelog
 
 Notable user-visible changes to Pipes: new features, settings, look, performance and fixes. Internal
-refactors and documentation-only changes aren't listed here. Dates are when a change landed on `main`.
-Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+refactors and documentation-only changes aren't listed here. Format based on
+[Keep a Changelog](https://keepachangelog.com/en/1.0.0/); versions follow [Semantic Versioning](https://semver.org/).
+Each version has a [GitHub release](https://github.com/chrisjmendoza/pipes-screensaver/releases) with `Pipes.scr`
+attached.
 
-## Unreleased
+## [Unreleased]
 
-Everything merged to `main` so far is listed by date below; no versioned release has been cut yet.
+Changes merged to `main` since the last release go here, and move under a new version heading when it's released.
 
-## 2026-09-26
+## [1.0.0] - 2026-09-26
 
-### Added
+The first release: everything from the first three days of development, listed below by the day it landed on
+`main`. `Pipes.scr` is now built self-contained (the .NET runtime is bundled inside it), so it runs on any 64-bit
+Windows 10 or 11 without installing anything, and the file carries its version in Properties > Details.
+
+### 2026-09-26
+
+#### Added
 
 - **Traced reflections** (Graphics group, modern style only, off by default): metal pipes, and paint at grazing
   angles, mirror the pipes around them instead of a fake sky, traced by a ray through a grid of the scene rebuilt
@@ -18,9 +26,9 @@ Everything merged to `main` so far is listed by date below; no versioned release
   usual fly-through from 1.82 to 3.12 ms, and an all-metal tunnel of smooth elbows from 1.69 to 5.51 ms.
   (docs/RENDERING.md, "Traced reflections")
 
-## 2026-09-25
+### 2026-09-25
 
-### Added
+#### Added
 
 - **Shadows** from the key light: a shadow map with soft edges (dappled inside the fly-through tunnel too). On by
   default in the modern style; costs about 0.2-0.45 ms a frame at 1080p. (docs/RENDERING.md, "Shadows: a shadow
@@ -49,7 +57,7 @@ Everything merged to `main` so far is listed by date below; no versioned release
 - Procedurally generated app icon: ray-traced 3D pipes seen from the same diagonal the app's camera uses,
   lit and tonemapped the same way, in the classic screensaver palette.
 
-### Changed
+#### Changed
 
 - Settings dialog relaid out in two columns of groups (Animation and Flight on the left, Pipes and Graphics on
   the right); the Flight group greys out unless the camera flies through.
@@ -59,7 +67,7 @@ Everything merged to `main` so far is listed by date below; no versioned release
 - Depth of field now fades out over take-off and is skipped entirely in flight, where it used to blur most of
   the screen (the tunnel walls sit right beside the camera, and a thin lens blurs near things hardest).
 
-### Fixed
+#### Fixed
 
 - Pipes turned pale and milky whenever the camera looked along them, or up the tunnel in flight: the fake sky
   they reflect is now dark instead of a bright gradient, so only the studio light strips stay bright.
@@ -67,9 +75,9 @@ Everything merged to `main` so far is listed by date below; no versioned release
 - Cancel button in the settings dialog now actually closes it (it previously relied on a dialog result that only
   applies to dialogs shown modally, and the settings window is the app's main window).
 
-## 2026-09-24
+### 2026-09-24
 
-### Added
+#### Added
 
 - Initial release: OpenGL 3D pipes screensaver remake with smooth pipe growth, HDR shading with ACES tonemapping,
   plastic and metallic finishes, ball joints, multi-monitor fullscreen, a Screen Saver Settings preview,
@@ -99,19 +107,22 @@ Everything merged to `main` so far is listed by date below; no versioned release
 - `/bench` developer command, for measuring how expensive a settings combination is (renders offscreen and
   writes the average time per frame to a text file).
 
-### Changed
+#### Changed
 
 - Raised limits: up to 20 pipes growing at once, 200 per scene, and growth speed up to 80.
 - Settings dropdowns now size themselves to their longest item instead of clipping it (e.g. "Classic (lite, like
   the original)").
 
-### Fixed
+#### Fixed
 
 - Window title showed only "P" (the window procedure was bound to the ANSI entry points while the window itself
   used Unicode, so the title was read back as a one-character string).
 
-### Performance
+#### Performance
 
 - Frames are now paced by sleeping until the monitor's vblank instead of letting the graphics driver spin a CPU
   core while waiting for VSync: CPU use dropped from as much as a full core to a steady 7-15% at 60 fps.
   (docs/ARCHITECTURE.md, "Frame pacing: sleeping, not spinning")
+
+[Unreleased]: https://github.com/chrisjmendoza/pipes-screensaver/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/chrisjmendoza/pipes-screensaver/releases/tag/v1.0.0

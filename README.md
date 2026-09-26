@@ -37,6 +37,16 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
 - **Proper screensaver:** fullscreen across all monitors, per-monitor high-DPI, works in the Screen Saver
   Settings preview box, and has a settings dialog.
 
+## Download
+
+Get `Pipes.scr` from the [latest release](https://github.com/chrisjmendoza/pipes-screensaver/releases/latest) (or the
+`.zip` with it inside, if your browser blocks `.scr` downloads, which some do for any screensaver). It's a single
+file with everything included (no .NET to install), for 64-bit Windows 10 or 11. Right-click it and choose
+**Install**, then pick "Pipes" in Screen Saver Settings; **Settings...** there opens its options.
+
+It isn't code-signed, so Windows SmartScreen may say "Windows protected your PC" the first time: choose **More info**,
+then **Run anyway**. The release page lists the file's SHA-256 if you want to check the download.
+
 ## Build & try
 
 Requires the .NET 10 SDK.
@@ -72,8 +82,11 @@ Pipes.exe /shot test.png
 
 ## Install as your screensaver
 
+To build it yourself:
+
 ```powershell
-.\scripts\publish.ps1            # -> publish\Pipes.scr
+.\scripts\publish.ps1                       # -> publish\Pipes.scr, self-contained (~50 MB, runs anywhere)
+.\scripts\publish.ps1 -FrameworkDependent   # a few MB, but needs the .NET 10 Desktop Runtime installed
 ```
 
 Then either right-click `publish\Pipes.scr` and choose **Install**, or run `.\scripts\publish.ps1 -Install` from
@@ -117,7 +130,7 @@ src/Pipes/
   Native/Win32.cs         P/Invoke declarations
   Native/VBlankWaiter.cs  sleeps until the monitor's refresh, so the driver never spins a CPU core waiting
   Pipes.ico               app icon (exe/scr, settings dialog, GL window); generated, see scripts/make_icon.py
-scripts/publish.ps1       single-file publish -> Pipes.scr (optionally install)
+scripts/publish.ps1       single-file publish -> Pipes.scr, self-contained by default (optionally install)
 scripts/make_icon.py      generates src/Pipes/Pipes.ico procedurally (re-run after changing it)
 docs/                     how it all works (start with ARCHITECTURE.md)
 ```
