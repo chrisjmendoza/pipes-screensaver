@@ -27,6 +27,10 @@ internal sealed class ConfigForm : Form
     private readonly CheckBox _fittings = Check("Valves, couplings, flanges and junctions");
     private readonly CheckBox _teapots = Check("Rare teapots (like the original)");
 
+    // Quality presets (see QualityPresets): the dropdown's items are "Custom" then the presets in enum order, so a
+    // preset's index is (int)preset + 1.
+    private readonly ComboBox _quality = Dropdown("Custom", "Lite", "Low", "Medium", "High", "Ultra");
+    private readonly Button _testPc = new() { Text = "Test this PC…", AutoSize = true };
     private readonly ComboBox _style = Dropdown("Modern", "Classic (lite, like the original)");
     private readonly ComboBox _aa = Dropdown("Off", "2x", "4x", "8x");
     private readonly CheckBox _surfaces = Check("Surface detail (grime, scratches, rust; off = flat)");
@@ -38,6 +42,13 @@ internal sealed class ConfigForm : Form
     private readonly CheckBox _dof = Check("Depth of field (blur near and far pipes; off in flight)");
 
     private readonly GroupBox _flightGroup;
+
+    /// <summary>
+    /// Set while the dialog itself is changing controls for the quality preset (applying one, or showing which one
+    /// the controls match), so those changes don't count as the user's: they don't re-derive the preset halfway
+    /// through, and switching the style to Classic doesn't also switch the pipes to the classic ones.
+    /// </summary>
+    private bool _settingQuality;
 
     // Each column's groups and row labels, so OnLoad can line them up (see AlignColumns).
     private readonly List<GroupBox> _leftGroups = [], _rightGroups = [];
@@ -84,6 +95,7 @@ internal sealed class ConfigForm : Form
             ("", _fittings),
             ("", _teapots));
         var graphics = Group("Graphics", _rightGroups, _rightLabels,
+            ("Quality", QualityRow()),
             ("Style", _style),
             ("Anti-aliasing", _aa),
             ("", _surfaces),
@@ -139,9 +151,23 @@ internal sealed class ConfigForm : Form
         // Hooked up after loading, so opening the dialog doesn't count as the user picking a style.
         _style.SelectedIndexChanged += (_, _) =>
         {
-            if (_style.SelectedIndex == (int)GraphicsStyle.Classic) UseClassicPipes();
+            // Only when the user picks Classic by hand. Choosing the Lite preset switches the style too, but a
+            // quality preset is about speed, and mustn't change the pipes' look.
+            if (_style.SelectedIndex == (int)GraphicsStyle.Classic && !_settingQuality) UseClassicPipes();
             UpdateEffectToggles();
         };
+
+        // Quality presets. Picking one sets the graphics controls; changing any of those controls by hand shows which
+        // preset they now match, or Custom. Picking "Custom" itself changes nothing: it's just where the dropdown
+        // sits while the controls don't match a preset.
+        _quality.SelectedIndexChanged += (_, _) =>
+        {
+            if (!_settingQuality && _quality.SelectedIndex > 0) ApplyPreset((QualityPreset)(_quality.SelectedIndex - 1));
+        };
+        foreach (var combo in new[] { _style, _aa }) combo.SelectedIndexChanged += (_, _) => UpdateQuality();
+        foreach (var check in new[] { _surfaces, _shadows, _ao, _bloom, _traced }) check.CheckedChanged += (_, _) => UpdateQuality();
+        _testPc.Click += async (_, _) => await TestThisPc();
+        UpdateQuality(); // loading didn't fire the handlers above (they weren't attached yet); "Reset" does
 
         // The Weathered finish is all surface detail (flat, it would just be Mixed), so the two go together: picking
         // Weathered turns detail on, and turning detail off moves Weathered to Mixed.
@@ -167,6 +193,109 @@ internal sealed class ConfigForm : Form
         _thickness.Checked = false;
         _fittings.Checked = false;
         _teapots.Checked = true; // the original had them too
+    }
+
+    /// <summary>
+    /// Set the graphics controls for <paramref name="preset"/>. The preset is applied to a copy of what the dialog
+    /// shows, and the result copied back into the controls, so the rules for what a preset changes (and leaves alone)
+    /// live in one place, <see cref="QualityPresets.Apply"/>. Nothing is saved until OK, as with any other change.
+    /// </summary>
+    private void ApplyPreset(QualityPreset preset)
+    {
+        var s = new PipesSettings();
+        ApplyTo(s);
+        QualityPresets.Apply(preset, s);
+        _settingQuality = true;
+        try
+        {
+            _style.SelectedIndex = (int)s.Style;
+            _aa.SelectedIndex = s.Antialiasing switch { 0 => 0, 2 => 1, 4 => 2, _ => 3 };
+            // Turning surface detail off moves a Weathered finish to Mixed (see the constructor): Weathered can't be
+            // drawn without it, so that's what the pipes would look like anyway.
+            _surfaces.Checked = s.SurfaceDetail;
+            _shadows.Checked = s.Shadows;
+            _ao.Checked = s.AmbientOcclusion;
+            _bloom.Checked = s.Bloom;
+            _traced.Checked = s.TracedReflections;
+        }
+        finally
+        {
+            _settingQuality = false;
+        }
+        UpdateEffectToggles();
+    }
+
+    /// <summary>Point the quality dropdown at the preset the controls match, or at Custom.</summary>
+    private void UpdateQuality()
+    {
+        if (_settingQuality) return; // mid-preset: the controls are only partly set
+        var s = new PipesSettings();
+        ApplyTo(s);
+        _settingQuality = true; // so moving the dropdown doesn't apply the preset it moves to
+        try
+        {
+            _quality.SelectedIndex = QualityPresets.Match(s) is { } preset ? (int)preset + 1 : 0;
+        }
+        finally
+        {
+            _settingQuality = false;
+        }
+    }
+
+    /// <summary>
+    /// "Test this PC": time each preset on this machine and offer the best one that keeps up with the monitor (see
+    /// <see cref="Autotune"/>). The test runs in a separate process, with the dialog's current (unsaved) settings,
+    /// while this window waits without freezing: <c>await</c> hands the UI thread back to Windows until the test
+    /// is done, so the progress window keeps animating and its Cancel button works.
+    /// </summary>
+    private async Task TestThisPc()
+    {
+        var snapshot = new PipesSettings();
+        ApplyTo(snapshot);
+        var (width, height) = GLHost.VirtualScreenSize();
+        var hz = GLHost.PrimaryRefreshRate();
+
+        using var cancel = new CancellationTokenSource();
+        using var progress = new AutotuneProgressForm($"Testing graphics at {width}×{height}, {hz} Hz…", cancel.Cancel);
+        // Like a modal dialog, but without blocking: the settings can't be changed (or the dialog closed) mid-test.
+        Enabled = false;
+        progress.Show(this);
+        AutotuneReport? report = null;
+        string? failure = null;
+        try
+        {
+            report = await Autotune.RunAsync(snapshot, cancel.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // The user cancelled: nothing to report.
+        }
+        catch (Exception ex) when (ex is AutotuneFailedException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            failure = ex.Message;
+        }
+        finally
+        {
+            // Re-enable this window before closing the progress window. The other way round, for a moment no window
+            // of ours can take the focus, so Windows gives it to some other program and the dialog drops behind it.
+            Enabled = true;
+            progress.Close();
+        }
+
+        if (failure != null)
+        {
+            MessageBox.Show(this,
+                "The graphics test couldn't finish. This can be a graphics driver problem: rendering as fast as possible " +
+                "is harder on a driver than running the screensaver normally.\n\n" +
+                failure + "\n\n" +
+                "Try a lower quality preset (Low or Lite), or update your graphics driver.",
+                "Test this PC", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        if (report == null) return;
+
+        using var results = new AutotuneResultsForm(report);
+        if (results.ShowDialog(this) == DialogResult.OK) _quality.SelectedIndex = (int)report.Recommended + 1;
     }
 
     /// <summary>The flight settings only matter when flying through the pipes: grey out the whole group otherwise.</summary>
@@ -226,6 +355,20 @@ internal sealed class ConfigForm : Form
         var column = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Margin = Padding.Empty };
         column.Controls.AddRange(groups);
         return column;
+    }
+
+    /// <summary>
+    /// The quality dropdown with the "Test this PC" button beside it. The dropdown has no margin on the left, so it
+    /// lines up with the dropdowns below it; <see cref="FitDropdowns"/> narrows it so the button ends where they do.
+    /// </summary>
+    private FlowLayoutPanel QualityRow()
+    {
+        _quality.Anchor = _testPc.Anchor = AnchorStyles.Left; // centred on each other
+        _quality.Margin = new Padding(0, 0, 3, 0);
+        _testPc.Margin = new Padding(3, 0, 0, 0);
+        var row = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
+        row.Controls.AddRange([_quality, _testPc]);
+        return row;
     }
 
     /// <summary>A slider with its current value shown to the right of it.</summary>
@@ -304,6 +447,13 @@ internal sealed class ConfigForm : Form
             }
         }
         foreach (var combo in combos) combo.Width = width;
+
+        // The quality dropdown shares its row with the "Test this PC" button. Narrowed so the pair ends where the
+        // other dropdowns do (its own items are short), but never narrower than those items need.
+        var qualityItems = _quality.Items.Cast<object>().Max(item => TextRenderer.MeasureText(item.ToString(), _quality.Font).Width)
+            + SystemInformation.VerticalScrollBarWidth + LogicalToDeviceUnits(12);
+        var besideButton = width - _quality.Margin.Right - _testPc.Margin.Left - _testPc.PreferredSize.Width;
+        _quality.Width = Math.Max(qualityItems, besideButton);
     }
 
     private static CheckBox Check(string text) => new() { Text = text, AutoSize = true };
@@ -342,31 +492,38 @@ internal sealed class ConfigForm : Form
         UpdateEffectToggles();
     }
 
-    private void Apply()
+    private void Apply() => ApplyTo(_settings);
+
+    /// <summary>
+    /// Copy the controls into <paramref name="s"/>. Usually that's the real settings (<see cref="Apply"/>), but the
+    /// quality preset logic and the "Test this PC" check read the dialog's state into a throwaway copy, so nothing
+    /// changes before OK.
+    /// </summary>
+    private void ApplyTo(PipesSettings s)
     {
-        _settings.ConcurrentPipes = (int)_concurrent.Value;
-        _settings.PipesPerScene = (int)_perScene.Value;
-        _settings.Speed = _speed.Value;
-        _settings.Camera = (CameraMotion)_camera.SelectedIndex;
-        _settings.FlightSpeed = _flightSpeed.Value;
-        _settings.VaryFlightSpeed = _varySpeed.Checked;
-        _settings.CourseComplexity = _complexity.Value;
-        _settings.TunnelDensity = _density.Value;
-        _settings.SeparateMonitors = _separateMonitors.Checked;
-        _settings.Joints = (JointStyle)_joints.SelectedIndex;
-        _settings.Finish = (Finish)_finish.SelectedIndex;
-        _settings.VaryThickness = _thickness.Checked;
-        _settings.Fittings = _fittings.Checked;
-        _settings.Teapots = _teapots.Checked;
-        _settings.Style = (GraphicsStyle)_style.SelectedIndex;
-        _settings.Antialiasing = _aa.SelectedIndex switch { 0 => 0, 1 => 2, 2 => 4, _ => 8 };
-        _settings.SurfaceDetail = _surfaces.Checked;
-        _settings.AmbientOcclusion = _ao.Checked;
-        _settings.Bloom = _bloom.Checked;
-        _settings.DepthOfField = _dof.Checked;
-        _settings.Shadows = _shadows.Checked;
-        _settings.MovingLight = _movingLight.Checked;
-        _settings.TracedReflections = _traced.Checked;
-        _settings.Clamped();
+        s.ConcurrentPipes = (int)_concurrent.Value;
+        s.PipesPerScene = (int)_perScene.Value;
+        s.Speed = _speed.Value;
+        s.Camera = (CameraMotion)_camera.SelectedIndex;
+        s.FlightSpeed = _flightSpeed.Value;
+        s.VaryFlightSpeed = _varySpeed.Checked;
+        s.CourseComplexity = _complexity.Value;
+        s.TunnelDensity = _density.Value;
+        s.SeparateMonitors = _separateMonitors.Checked;
+        s.Joints = (JointStyle)_joints.SelectedIndex;
+        s.Finish = (Finish)_finish.SelectedIndex;
+        s.VaryThickness = _thickness.Checked;
+        s.Fittings = _fittings.Checked;
+        s.Teapots = _teapots.Checked;
+        s.Style = (GraphicsStyle)_style.SelectedIndex;
+        s.Antialiasing = _aa.SelectedIndex switch { 0 => 0, 1 => 2, 2 => 4, _ => 8 };
+        s.SurfaceDetail = _surfaces.Checked;
+        s.AmbientOcclusion = _ao.Checked;
+        s.Bloom = _bloom.Checked;
+        s.DepthOfField = _dof.Checked;
+        s.Shadows = _shadows.Checked;
+        s.MovingLight = _movingLight.Checked;
+        s.TracedReflections = _traced.Checked;
+        s.Clamped();
     }
 }

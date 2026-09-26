@@ -220,6 +220,134 @@ internal sealed unsafe class GLHost : IDisposable
     }
 
     /// <summary>
+    /// The "Test this PC" check behind the settings dialog: which <see cref="QualityPreset"/> this machine can run
+    /// at its real size and refresh rate. Writes an <see cref="AutotuneReport"/> as JSON to
+    /// <paramref name="resultPath"/>. The rules it judges by (and why) are the constants in <see cref="Pipes.Autotune"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It measures what the screensaver will actually draw: the whole desktop, one view per monitor if
+    /// <see cref="PipesSettings.SeparateMonitors"/> is on (as fullscreen does), with the user's own pipe and camera
+    /// settings. Only the graphics settings change from preset to preset.
+    /// </para>
+    /// <para>
+    /// The scenes are simulated once, then each preset draws <em>the same</em> scenes, so the presets are compared
+    /// on equal work. A <see cref="View"/> bundles a scene with a renderer, and a renderer's options are fixed when
+    /// it's created (they choose which shaders to compile), so each preset swaps a new renderer into the existing
+    /// views (<see cref="View.ReplaceRenderer"/>) rather than building new views, which would mean new scenes.
+    /// </para>
+    /// <para>
+    /// Each frame is timed on its own, including the scene update, with <c>Finish()</c> at the end so the time
+    /// covers the GPU's work too, not just the CPU queueing it. That's a little pessimistic: in the real loop the
+    /// CPU's part of the next frame overlaps the GPU's part of this one. Pessimistic is the right way to be wrong
+    /// here (see <see cref="Pipes.Autotune.TargetShareOfBudget"/>).
+    /// </para>
+    /// </remarks>
+    public void Autotune(PipesSettings settings, string resultPath)
+    {
+        var (width, height) = VirtualScreenSize();
+        var refreshHz = PrimaryRefreshRate();
+        var budgetMs = 1000.0 / refreshHz;
+        var targetMs = budgetMs * Pipes.Autotune.TargetShareOfBudget;
+
+        // Fixed seeds, so running the test twice measures the same scenes.
+        var views = CreateViews(settings, width, height, settings.SeparateMonitors, i => new Random(1 + i));
+        var simulated = SimulateForAutotune(views, settings.Camera == CameraMotion.FlyThrough);
+        var (fbo, tex) = CreateReadbackTarget(width, height);
+
+        void Frame()
+        {
+            foreach (var view in views) view.Update(1f / 60f); // keep the scenes moving, as they would live
+            RenderViews(views, fbo, width, height);
+            _gl.Finish();
+        }
+
+        var results = new List<AutotuneResult>();
+        try
+        {
+            foreach (var preset in Enum.GetValues<QualityPreset>())
+            {
+                // Swap in this preset's renderers (the previous preset's are disposed, freeing their buffers).
+                var options = RenderOptions.From(QualityPresets.With(preset, settings));
+                foreach (var view in views) view.ReplaceRenderer(new PipeRenderer(_gl, options));
+
+                var warmUp = results.Count == 0 ? Pipes.Autotune.FirstWarmUpSeconds : Pipes.Autotune.LaterWarmUpSeconds;
+                var clock = Stopwatch.StartNew();
+                for (var i = 0; i < 10 || clock.Elapsed.TotalSeconds < warmUp; i++) Frame();
+
+                var frameTimes = new List<double>();
+                clock.Restart();
+                while (frameTimes.Count < Pipes.Autotune.MinMeasuredFrames || clock.Elapsed.TotalSeconds < Pipes.Autotune.MeasureSeconds)
+                {
+                    var start = clock.Elapsed.TotalMilliseconds;
+                    Frame();
+                    frameTimes.Add(clock.Elapsed.TotalMilliseconds - start);
+                    // On a very slow machine (software rendering, say), a clear failure needn't be timed precisely:
+                    // once 15 frames have all taken more than twice the target, stop, rather than spend a minute
+                    // measuring it.
+                    if (frameTimes.Count >= 15 && frameTimes.Min() > 2 * targetMs) break;
+                }
+
+                var p90 = Pipes.Autotune.Percentile(frameTimes, Pipes.Autotune.JudgedPercentile);
+                var fits = p90 <= targetMs;
+                results.Add(new AutotuneResult(preset, Math.Round(frameTimes.Average(), 3), Math.Round(p90, 3), fits));
+                // The presets only get heavier from here, so the first that doesn't fit ends the test.
+                if (!fits) break;
+            }
+        }
+        finally
+        {
+            _gl.DeleteFramebuffer(fbo);
+            _gl.DeleteTexture(tex);
+            foreach (var view in views) view.Dispose();
+        }
+
+        // The highest preset that fit (they're tried lightest first). If even Lite didn't, it's still the lightest
+        // there is, so recommend it anyway.
+        var recommended = results.LastOrDefault(r => r.Fits)?.Preset ?? QualityPreset.Lite;
+        Pipes.Autotune.Write(new AutotuneReport(
+            refreshHz, Math.Round(budgetMs, 3), Math.Round(targetMs, 3), width, height, views.Count,
+            _gl.GetStringS(StringName.Renderer) ?? "unknown", settings.Camera, simulated, results, recommended), resultPath);
+    }
+
+    /// <summary>
+    /// Run the scenes forward to a representative moment, at a fixed 1/60 s step: in fly-through, until every view
+    /// is in flight plus a few seconds; otherwise, a fixed time into the scene. Returns the simulated seconds.
+    /// </summary>
+    private static double SimulateForAutotune(List<View> views, bool flyThrough)
+    {
+        const float step = 1f / 60f;
+        float time = 0f, allFlyingAt = -1f;
+        while (time < Pipes.Autotune.MaxSimulatedSeconds)
+        {
+            foreach (var view in views) view.Update(step);
+            time += step;
+            if (!flyThrough)
+            {
+                if (time >= Pipes.Autotune.SceneSeconds) break;
+            }
+            else if (allFlyingAt < 0f)
+            {
+                if (views.All(v => v.Scene.Flying)) allFlyingAt = time;
+            }
+            else if (time - allFlyingAt >= Pipes.Autotune.SecondsAfterTakeOff) break;
+        }
+        return Math.Round(time, 2);
+    }
+
+    /// <summary>
+    /// The primary monitor's refresh rate in Hz, as Windows is running it now. 0 and 1 mean "the hardware default"
+    /// (some drivers and virtual displays report them), which is 60 Hz in practice.
+    /// </summary>
+    public static int PrimaryRefreshRate()
+    {
+        var mode = new Win32.DEVMODE { dmSize = (ushort)Marshal.SizeOf<Win32.DEVMODE>() };
+        return Win32.EnumDisplaySettings(null, Win32.ENUM_CURRENT_SETTINGS, ref mode) && mode.dmDisplayFrequency > 1
+            ? (int)mode.dmDisplayFrequency
+            : 60;
+    }
+
+    /// <summary>
     /// One view covering the whole target, or (with <paramref name="perMonitor"/> and more than one monitor) one per
     /// monitor, each placed where that monitor sits within the virtual desktop.
     /// </summary>
@@ -262,7 +390,7 @@ internal sealed unsafe class GLHost : IDisposable
         return monitors;
     }
 
-    private static (int Width, int Height) VirtualScreenSize() =>
+    public static (int Width, int Height) VirtualScreenSize() =>
         (Win32.GetSystemMetrics(Win32.SM_CXVIRTUALSCREEN), Win32.GetSystemMetrics(Win32.SM_CYVIRTUALSCREEN));
 
     /// <summary>An 8-bit offscreen target we can read back (the default framebuffer of a hidden window is undefined).</summary>

@@ -50,8 +50,9 @@ Nothing is committed to yet. Candidates, roughly smallest first:
   fills a small part of the cone, the rest shows the sky instead of the pipe behind it, and thin fittings leave faint
   sky-coloured gaps in reflected pipes. Keeping the next hit too, and blending it into what the first doesn't cover,
   would fill them.
-- **Presets:** a dropdown of starting points (Default, Classic 1995, Zen flight, Wild flight, Low power), and
-  perhaps "save current as" for the user's own.
+- **Look presets:** a dropdown of starting points for the whole look and motion (Classic 1995, Zen flight, Wild
+  flight...), and perhaps "save current as" for the user's own. Quality presets, for the graphics cost alone, exist
+  now (see Done); these would be about everything else.
 - **"Flex" pipes:** ribbed flexible conduit (a ripple in the cylinder shader's radius along its length).
 - **Performance mode:** half-resolution SSAO and DoF for integrated GPUs and very large multi-monitor setups.
 
@@ -85,3 +86,5 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - Frame pacing that sleeps instead of letting the driver spin: CPU from up to a full core down to 7–15%
 - Traced reflections (optional): metal pipes mirror the pipes around them, traced in the shader through a grid of
   the scene rebuilt every frame; about +1.1–1.3 ms a frame in flight at 1080p
+- Quality presets (Lite, Low, Medium, High, Ultra) for the graphics settings, and "Test this PC", which times each on
+  the real screens at their refresh rate (`/autotune`, in a child process) and recommends the highest that keeps up

@@ -33,7 +33,7 @@ internal sealed class View : IDisposable
     public int Height { get; private set; }
 
     public Scene Scene { get; }
-    public PipeRenderer Renderer { get; }
+    public PipeRenderer Renderer { get; private set; }
 
     private float Aspect => (float)Width / Math.Max(1, Height);
 
@@ -43,6 +43,18 @@ internal sealed class View : IDisposable
         Height = Math.Max(1, height);
         Renderer.Resize(Width, Height);
         Scene.SetAspect(Aspect);
+    }
+
+    /// <summary>
+    /// Draw this view's scene with <paramref name="renderer"/> from now on, disposing the old one. /autotune uses it
+    /// to draw the very same scene with each quality preset in turn: render options are fixed for a renderer's
+    /// lifetime (they pick which shaders to compile), so a new preset needs a new renderer, but the scene can stay.
+    /// </summary>
+    public void ReplaceRenderer(PipeRenderer renderer)
+    {
+        Renderer.Dispose();
+        Renderer = renderer;
+        Renderer.Resize(Width, Height);
     }
 
     public void Update(float dt) => Scene.Update(dt);

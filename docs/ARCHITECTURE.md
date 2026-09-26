@@ -6,9 +6,10 @@ goes deeper into the pipe simulation. The graphics side has its own guide, [REND
 ## The big picture
 
 ```
-Program.Main ──► parses /s /p /c /w /shot /bench
+Program.Main ──► parses /s /p /c /w /shot /bench /autotune
      │
      ├─ /c ──────► ConfigForm (WinForms settings dialog)
+     │                └─ "Test this PC" ──► a second Pipes.exe /autotune (see Settings)
      │
      └─ /s /p /w ─► GLHost.Run ─── loop every frame ───┐
                                                         │
@@ -526,6 +527,103 @@ the enum order, so `(JointStyle)_joints.SelectedIndex` converts directly. **Rese
 closes the form explicitly: a button's `DialogResult` only closes a form shown with `ShowDialog()`, and this one is
 the application's main window (`Application.Run`).
 
+### Quality presets
+
+The first row of the Graphics group is a **Quality** dropdown: Custom, Lite, Low, Medium, High, Ultra
+(`QualityPresets.cs`). A preset sets only the settings that decide how much work the GPU does per frame (style,
+anti-aliasing, surface detail, shadows, AO, bloom, traced reflections), never the pipes, the camera or the other
+matters of taste. From lightest to heaviest:
+
+| Preset | Style | MSAA | Surface detail | Shadows | AO | Bloom | Traced reflections |
+|---|---|---|---|---|---|---|---|
+| Lite | Classic | 4× | (ignored) | (ignored) | (ignored) | (ignored) | (ignored) |
+| Low | Modern | 2× | off | off | off | on | off |
+| Medium | Modern | 4× | on | on | off | on | off |
+| High | Modern | 4× | on | on | on | on | off |
+| Ultra | Modern | 8× | on | on | on | on | on |
+
+High is exactly the defaults, so a fresh install reads "High" (a `Debug.Assert` in `QualityPresets` keeps the two
+in step). `QualityPresets.Match` goes the other way: which preset some settings amount to, or none (Custom). Any
+classic-style settings count as Lite, whatever their anti-aliasing.
+
+In the dialog the two directions are wired both ways. Picking a preset copies the dialog into a throwaway
+`PipesSettings`, applies the preset to that and copies the graphics fields back into the controls, so the rules
+live in `QualityPresets` alone. Changing any of those controls by hand re-derives the dropdown with `Match`. A flag,
+`_settingQuality`, is set while the dialog changes controls itself, for two reasons: so the dropdown isn't
+re-derived halfway through applying a preset (or re-applied when it's only being moved to show a match), and so
+that the Lite preset switching the style to Classic doesn't also run the "classic pipes" starting point, which is
+for a user picking the style by hand. One existing rule still applies: turning surface detail off moves a
+Weathered finish to Mixed, because Weathered can't be drawn without it.
+
+### "Test this PC": the /autotune command
+
+Next to the dropdown, **Test this PC…** finds the highest preset this machine can run at its monitor's refresh
+rate. It works in two processes:
+
+```
+ConfigForm.TestThisPc                                  Pipes.exe /autotune result.json   (PIPES_SETTINGS=tmp)
+  ├─ dialog state ─► temp settings JSON ─────────────►  GLHost.Autotune
+  ├─ Autotune.RunAsync: start child, await exit          ├─ real desktop size, primary monitor's Hz
+  │   (progress window, Cancel, 90 s time-out)           ├─ simulate the scenes once
+  │                                                      ├─ for each preset, Lite → Ultra: time the same scenes
+  └─ read result JSON ◄─────────────────────────────────  └─ write the report, stop at the first too slow
+      └─ AutotuneResultsForm: table, "Use High"
+```
+
+**Why a child process.** The test renders flat out, the one situation where the graphics driver has been seen to
+crash (see ROADMAP.md, *Known issues*). A driver crash ends the process it happens in. In a child process that's a
+failed test and a message box; in the dialog's own process it would take the dialog and its unsaved changes with
+it. The dialog passes its current, unsaved state by writing it to a temporary JSON file and pointing the child's
+`PIPES_SETTINGS` environment variable at it, the same override the development commands use, so the real settings
+file is never touched. The dialog doesn't freeze meanwhile: `await process.WaitForExitAsync` hands the UI thread
+back to Windows until the child exits. The dialog disables itself and shows a small progress window (shown with
+`Show`, not `ShowDialog`, which would block the `await`), which together behave like a modal dialog. Both temporary
+files are deleted afterwards.
+
+**What it measures** (`GLHost.Autotune`), in the child:
+
+- The whole desktop, with one view per monitor if "Own scene on each monitor" is on, as fullscreen does. The frame
+  budget is 1000 ms ÷ the primary monitor's current refresh rate (`EnumDisplaySettings`; a reported 0 or 1 Hz means
+  "default" and counts as 60).
+- The user's own pipe and camera settings, simulated once with fixed seeds: in fly-through until every view's
+  camera has taken off (`Scene.Flying`) plus 5 seconds, since flight has many more pieces than the box; otherwise
+  12 seconds in, like `/bench`.
+- Every preset draws *the same* scenes. A renderer's options are fixed when it's made (they choose which shaders to
+  compile), so each preset swaps new renderers into the existing views (`View.ReplaceRenderer`) instead of making
+  new views, which would mean new scenes.
+- A warm-up before timing: 1.5 seconds before the first preset, because an idle GPU runs at a low clock and takes a
+  while to speed up (see `/bench` below), and 0.3 seconds before each later one, for its new shaders and buffers.
+- Then about a second (at least 45 frames) per preset, each frame timed on its own: scene update, render, and
+  `glFinish`, so the time includes the GPU's work. A preset **fits** if nine frames in ten take at most 75% of the
+  budget (5.2 ms at 144 Hz, 12.5 ms at 60 Hz). The percentile, not the average, so a preset that stutters every few
+  frames doesn't pass; the spare quarter is headroom for busier moments, a GPU slowing down as it heats up, and
+  other programs. The constants, with their reasons, are in `Autotune.cs`.
+- Presets only get heavier, so the first that doesn't fit ends the test (its numbers are still reported). The
+  recommendation is the last one that fit, or Lite if none did.
+
+The report is JSON (the `AutotuneReport` record):
+
+```json
+{
+  "refreshHz": 59, "budgetMs": 16.949, "targetMs": 12.712,
+  "width": 5680, "height": 1920, "viewCount": 3,
+  "renderer": "NVIDIA GeForce RTX 3080/PCIe/SSE2", "camera": "FlyThrough", "simulatedSeconds": 39.85,
+  "results": [
+    { "preset": "Lite", "avgMs": 2.708, "p90Ms": 3.278, "fits": true },
+    ...
+    { "preset": "Ultra", "avgMs": 13.906, "p90Ms": 15.171, "fits": false }
+  ],
+  "recommended": "High"
+}
+```
+
+`AutotuneResultsForm` shows it as a table (preset, frame time, fps, ✓ or "too slow"), the budget line, and the
+`GL_RENDERER` string. If that names an Intel chip or Windows' software renderer, it adds a note: on laptops with
+switchable graphics, Windows often runs small programs on the integrated chip unless told otherwise in Settings >
+System > Display > Graphics. **Use High** (or whichever) sets the Quality dropdown; as with everything in the
+dialog, nothing is saved until OK. If the child exits with an error code, times out, or leaves no readable report,
+a message box says so and suggests a lower preset.
+
 ## Development workflow
 
 - `Pipes.exe /w` for a resizable window.
@@ -544,6 +642,10 @@ the application's main window (`Application.Run`).
   queue commands. Combine it with `PIPES_SETTINGS` to compare settings. With traced reflections on, the report
   also gives the CPU time spent building the reflection grid, upload calls included, averaged over the timed frames
   only (the warm-up's first builds pay for JIT compiling and growing the arrays). It's part of the frame time too.
+- `Pipes.exe /autotune result.json` runs the settings dialog's "Test this PC" check directly and writes its JSON
+  report (see *"Test this PC": the /autotune command* above). It always uses the real desktop and refresh rate, so
+  point `PIPES_SETTINGS` at a test file to choose the pipe and camera settings it measures with. Timings include the
+  CPU's part of each frame, so a busy PC (a runaway process, a big build) makes every preset look slower.
 - To check an acceleration structure (like the reflection grid), compare it with brute force: a temporary shader
   that also tests every piece and paints the pixels where the two disagree. Slow, but it settles "is the structure
   wrong, or is this something else?" at once. That's how the traced reflections' speckles were shown to be a

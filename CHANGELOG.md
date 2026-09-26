@@ -10,6 +10,20 @@ attached.
 
 Changes merged to `main` since the last release go here, and move under a new version heading when it's released.
 
+### Added
+
+- **Quality presets:** a Quality dropdown at the top of the Graphics group (Lite, Low, Medium, High, Ultra) sets
+  the style, anti-aliasing, surface detail, shadows, ambient occlusion, bloom and traced reflections in one go.
+  It never changes the pipes, the camera or the other look settings, and shows "Custom" when the options don't
+  match a preset. High is the defaults; Ultra adds traced reflections and 8x MSAA; Lite is the classic style.
+  (docs/ARCHITECTURE.md, "Quality presets")
+- **Test this PC…** button next to it: times each preset for a moment on your real screens, at your monitor's
+  refresh rate, and recommends the highest one whose frames (nine in ten) take at most three-quarters of the time
+  between refreshes. Shows the results per preset and which graphics chip was used, with a hint for laptops that
+  ran it on the integrated chip. The test runs in a separate process, so a graphics driver crash just fails the
+  test instead of closing the settings. (docs/ARCHITECTURE.md, "Test this PC")
+- `/autotune <result.json>` command behind the button, which writes the measurements as JSON.
+
 ## [1.0.0] - 2026-09-26
 
 The first release: everything from the first three days of development, listed below by the day it landed on
