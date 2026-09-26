@@ -190,6 +190,12 @@ internal sealed unsafe class PipeRenderer : IDisposable
     /// <summary>Start the grid-build statistics afresh (/bench, after its warm-up). Nothing without traced reflections.</summary>
     public void ResetGridStats() => _grid?.ResetStats();
 
+    /// <summary>
+    /// With the stats overlay on, <see cref="Render"/> marks the end of each pass on this timer, so the overlay can
+    /// show the GPU time per pass. Null (the usual case) costs nothing.
+    /// </summary>
+    public Diagnostics.GpuTimer? Timer { get; set; }
+
     /// <summary>Which vertex-shader path (uMode) draws each kind of mesh.</summary>
     private static int ShaderMode(MeshKind kind) => kind switch
     {
@@ -266,39 +272,63 @@ internal sealed unsafe class PipeRenderer : IDisposable
         UploadInstances(pieces);
         // After the instances: the shader reads the pieces straight out of their instance buffers.
         _grid?.Build(pieces, camera.ShadowCentre);
+        // The GPU passes start here. Anything between the previous marker and this one (the uploads above, or the
+        // CPU catching up between views) isn't counted as any pass's time.
+        Timer?.Start();
 
         if (_options.Classic)
         {
             ClassicPass(camera, fade);
+            Timer?.Mark("Scene");
             // Two copies: MSAA resolve into a same-format texture, then a plain copy to the target. Going straight
             // from the multisampled buffer to the window isn't allowed if their formats differ even slightly.
             Blit(_sceneFbo, _resolveFbo);
             Blit(_resolveFbo, targetFbo, targetX, targetY);
+            Timer?.Mark("Post");
             return;
         }
 
         var shadows = _options.Shadows && camera.ShadowRadius > 0f;
         var (keyLight, fillLight) = LightRig(camera);
         var lightViewProj = shadows ? LightViewProj(camera, keyLight) : Matrix4x4.Identity;
-        if (shadows) ShadowPass(lightViewProj);
+        if (shadows)
+        {
+            ShadowPass(lightViewProj);
+            Timer?.Mark("Shadows");
+        }
         // Depth of field is skipped while the camera asks for no blur (in flight), and then the prepass it needs
         // (if AO doesn't) can be skipped too.
         var depthOfField = _options.DepthOfField && camera.FocusScale > 0f;
-        if (_options.AmbientOcclusion || depthOfField) GeometryPass(camera);
-        if (_options.AmbientOcclusion) AmbientOcclusionPass(camera);
+        if (_options.AmbientOcclusion || depthOfField)
+        {
+            GeometryPass(camera);
+            Timer?.Mark("Prepass");
+        }
+        if (_options.AmbientOcclusion)
+        {
+            AmbientOcclusionPass(camera);
+            Timer?.Mark("AO");
+        }
         ScenePass(camera, keyLight, fillLight, shadows, lightViewProj, camera.ShadowRadius * 2f / ShadowMapSize);
 
         // Resolve MSAA: the GPU averages each pixel's samples as it copies.
         Blit(_sceneFbo, _resolveFbo);
+        Timer?.Mark("Scene"); // includes the traced reflections, which happen inside the pipe shader
 
         var image = _resolveTex;
         if (depthOfField)
         {
             DepthOfFieldPass(camera, image);
             image = _dofTex;
+            Timer?.Mark("DoF");
         }
-        if (_options.Bloom) BloomPass(image);
+        if (_options.Bloom)
+        {
+            BloomPass(image);
+            Timer?.Mark("Bloom");
+        }
         PostPass(image, fade, targetFbo, targetX, targetY);
+        Timer?.Mark("Post");
     }
 
     // ---- Passes ----

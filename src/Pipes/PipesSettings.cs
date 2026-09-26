@@ -166,6 +166,16 @@ public sealed class PipesSettings
     /// </summary>
     public bool TracedReflections { get; set; } = false;
 
+    // ---- Diagnostics ----
+
+    /// <summary>
+    /// Draw the stats overlay in the top-left corner (of the main monitor): frames per second, a live frame-time
+    /// graph, 1% lows, GPU and CPU time per frame and per render pass, and GPU load, temperature, clocks and memory
+    /// where the hardware reports them. For judging which settings a PC can handle. F3 toggles it in the windowed
+    /// preview. See docs/ARCHITECTURE.md, "Stats overlay".
+    /// </summary>
+    public bool ShowStats { get; set; } = false;
+
     /// <summary>
     /// Settings files written before <see cref="Camera"/> existed had a <c>"CameraDrift": true/false</c> switch.
     /// This reads it (so "off" stays off) and is never written back out.

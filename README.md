@@ -34,6 +34,10 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
   per vertex on a black background, no effects. It uses roughly a tenth of the GPU time of the modern style.
 - **Multi-monitor aware:** each monitor gets its own scene, framed for its shape (portrait monitors too), and
   nothing is rendered in the gaps between monitors. Or, if you prefer, one scene spanning them all.
+- **Performance stats overlay:** optional, for the curious and for tuning: FPS, a live frame-time graph, 1% and
+  0.1% lows, GPU and CPU time per frame against the refresh interval, the GPU time split by render pass, and GPU
+  load, temperature, clocks, power and memory. It also spots a laptop drawing on its integrated GPU while the fast
+  one sits idle. F3 toggles it in the windowed preview.
 - **Proper screensaver:** fullscreen across all monitors, per-monitor high-DPI, works in the Screen Saver
   Settings preview box, and has a settings dialog.
 
@@ -127,6 +131,13 @@ src/Pipes/
     ReflectionGrid.cs     the scene filed into a grid each frame, for reflection rays to walk (traced reflections)
     MeshBuilder.cs        cylinder, sphere, torus and teapot meshes
     Camera.cs             view/projection, fog, focus and the shadow region
+    StatsOverlay.cs       draws the stats overlay: panel texture + live frame graph
+  Diagnostics/
+    FrameStats.cs         per-frame timing history: FPS, 1% lows, averages
+    GpuTimer.cs           GPU time per render pass, from timestamp queries
+    SystemMonitor.cs      CPU/GPU load, temperature, clocks, power, VRAM (NVML or performance counters)
+    StatsPanel.cs         paints the stats panel with GDI+
+    DisplayInfo.cs        refresh rate and display scaling of the window's monitor
   Native/Win32.cs         P/Invoke declarations
   Native/VBlankWaiter.cs  sleeps until the monitor's refresh, so the driver never spins a CPU core waiting
   Pipes.ico               app icon (exe/scr, settings dialog, GL window); generated, see scripts/make_icon.py

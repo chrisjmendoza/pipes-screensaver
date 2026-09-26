@@ -83,5 +83,7 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - Course complexity slider (zen to wild: straight lengths and maneuver mix), tunnel density slider, a pilot who varies the speed, and
   momentum in the gentle curves
 - Frame pacing that sleeps instead of letting the driver spin: CPU from up to a full core down to 7–15%
+- Performance stats overlay: FPS, live frame-time graph, lows, GPU/CPU time per frame and per pass (timestamp
+  queries), GPU sensors via NVML or performance counters, integrated-GPU warning
 - Traced reflections (optional): metal pipes mirror the pipes around them, traced in the shader through a grid of
   the scene rebuilt every frame; about +1.1–1.3 ms a frame in flight at 1080p

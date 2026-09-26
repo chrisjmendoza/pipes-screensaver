@@ -10,6 +10,17 @@ attached.
 
 Changes merged to `main` since the last release go here, and move under a new version heading when it's released.
 
+### Added
+
+- **Performance stats overlay** (Graphics group: "Show performance stats", off by default; F3 toggles it in the
+  windowed preview): a panel in the top-left corner of the main monitor with FPS, a live frame-time graph (frame
+  interval, GPU and CPU time, and the refresh interval), average FPS, 1% and 0.1% lows and the worst frame over
+  the last ten seconds, GPU and CPU time per frame as a share of the refresh interval, the GPU time split by render
+  pass (shadows, AO, scene, bloom...), and GPU load, temperature, core and memory clocks, power, VRAM, P-state and
+  CPU load where the hardware reports them (NVIDIA through NVML; other GPUs get load from Windows' counters). It
+  names the GPU OpenGL is drawing on and warns when a laptop is using its integrated GPU while the NVIDIA one sits
+  idle. Costs about 0.05 ms of GPU time a frame. (docs/ARCHITECTURE.md, "Stats overlay")
+
 ## [1.0.0] - 2026-09-26
 
 The first release: everything from the first three days of development, listed below by the day it landed on
