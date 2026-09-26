@@ -1,7 +1,8 @@
 # Rendering
 
 How a frame gets drawn, one pass at a time. The code is in `src/Pipes/Rendering/`: `PipeRenderer.cs` runs the
-passes, and `Shaders.cs` holds the GLSL for each one.
+passes, `Shaders.cs` holds the GLSL for each one, and `ReflectionGrid.cs` files the scene into a grid for traced
+reflections.
 
 There are two styles. **Modern** is the full chain described in most of this document. **Classic (lite)** is a
 single pass, described in its own section below.
@@ -17,8 +18,11 @@ single pass, described in its own section below.
    │                │ normals + depth  │   └──────┘   └─────────┘           ││
    │                └──────────────────┘                                    ▼▼
    │                         │ (depth)        ┌───────────────────────────────┐
-   └────────────────────────────────────────► │ scene: background + lit pipes │  HDR, MSAA
-                             │                └───────────────────────────────┘
+   ├────────────────────────────────────────► │ scene: background + lit pipes │  HDR, MSAA
+   │                         │                │ (traced reflections: a depth  │
+   │                         │                │ prepass first, and the pipes  │
+   └──► reflection grid ─────┼──────────────► │ trace rays through the grid)  │
+        (traced only)        │                └───────────────────────────────┘
                              │                                │ resolve (average MSAA samples)
                              │                                ▼
                              └──────────────────────► depth of field (optional)
@@ -28,8 +32,9 @@ single pass, described in its own section below.
                                    post: bloom mix, tonemap, vignette, gamma, dither, fade ──► screen
 ```
 
-The prepass only runs if SSAO or depth of field is on, and each optional pass only runs (and only allocates its
-textures) if enabled.
+The geometry prepass only runs if SSAO or depth of field is on, and each optional pass only runs (and only
+allocates its textures) if enabled. With traced reflections, the CPU also files every piece into a grid each frame,
+and the scene pass starts with a depth-only prepass of its own; see "Traced reflections".
 
 ## Shadows: a shadow map
 
@@ -162,7 +167,9 @@ next section). Then (with Surface detail off, the older and simpler version desc
   they mirrored that sky and turned pale and washed out. A reflection has to look like the world it's reflecting.
   Rough materials widen the strips and dim them by the same factor, which fakes a blurred reflection. It uses the
   isotropic roughness (brushed metal's two values averaged), and a roughness-aware Fresnel,
-  `F0 + (max(1 − rough, F0) − F0)(1 − N·V)^5`, so rough surfaces don't get a mirror-bright rim.
+  `F0 + (max(1 − rough, F0) − F0)(1 − N·V)^5`, so rough surfaces don't get a mirror-bright rim. With **Traced
+  reflections** on, the lookup goes through `environment()`, which fires a real reflection ray first: where it hits
+  a pipe, that pipe replaces `sky()` (see "Traced reflections" below).
 - **Ambient:** a hemisphere light, brighter from above than below.
 - **Fog:** exponential-squared, so distant pipes sink gently into the background.
 
@@ -271,6 +278,223 @@ All lighting maths happens in **linear** colour space, where doubling a value do
 written in sRGB (how monitors encode colour), so `PipeWorld.ToLinear` converts with `pow(c, 2.2)`, and the post
 pass converts back with `pow(c, 1/2.2)`. Doing lighting in sRGB instead makes highlights look muddy and blends
 look wrong.
+
+## Traced reflections
+
+`sky()` is a fake: a metal pipe mirrors a studio that isn't there, and never the pipes right next to it. With the
+**Traced reflections** setting (Graphics group, modern style only, off by default), the pipe shader fires one real
+reflection ray per pixel into the scene, and if it hits a pipe, shows that pipe instead of the sky. Rays that miss
+fall back to `sky()` exactly as before. Metal pipes then mirror their neighbours, and paint does too at grazing
+angles. It's all ordinary GLSL 3.3 in the existing shader: no ray-tracing hardware, which OpenGL can't reach anyway.
+
+It's compiled as a shader variant, like the surfaces: `#define TRACED 1` or `0`, with all the new shader code under
+`#if TRACED`. With the setting off, the shader is the one from before the feature, and `/shot` renders are
+pixel-for-pixel identical to it (checked on a Metallic box scene, a Mixed box scene with surface detail, and two
+flight frames).
+
+### Why a grid
+
+Testing a ray against all 10,000 pieces of a tunnel, for every pixel, would take seconds a frame. Ray tracers
+normally build a tree of boxes around the geometry (a *BVH*) so a ray only visits the few boxes it passes through.
+Here there's something simpler: the pipes already sit on the integer grid, and a piece is at most about a cell long.
+So the scene is filed into a **uniform grid** of unit cells, each listing the pieces that touch it, and a ray walks
+through the cells in order, testing only what's listed in the cells it crosses. The cost then depends on how far a
+ray travels, not on how many pieces there are. A grid is also cheap enough to rebuild from scratch every frame, which
+matters: pipes grow every frame, and in flight the whole scene streams past.
+
+**Building it** (`Rendering/ReflectionGrid.cs`, on the CPU, every frame, from the same `PieceLists` the renderer
+draws):
+
+- **Cells are centred on integers:** cell (i, j, k) covers i − 0.5 to i + 0.5 on each axis. Pipes' centre lines lie
+  on integer coordinates, so each pipe runs down the middle of its cells: a straight step (face to face through one
+  cell) is listed in just that cell, and a ball joint in 1. With cells starting at integers, every pipe would run
+  along cell walls and be listed in 4 cells.
+- **Bounding boxes:** a cylinder's ends are flat discs, so along each axis it only reaches past its end points by
+  the disc's extent, `radius × √(1 − a²)` (`a` being the axis direction's component on that axis): a pipe along x
+  doesn't stick out along x at all. Padding by the radius on every axis would have put a straight step in 3 cells;
+  the tight box made the whole frame 15–20% cheaper with tracing on. A sphere is its centre ± radius; a bend is the
+  box of its centre, `Start − Side` and `Start + Axis` (the quarter arc lies in the quadrant between them), plus the
+  tube radius; a ring is its centre ± (ring radius + tube radius).
+- **Bounds:** the box around all the pieces, but at most 64 cells along each axis. Flying, the tunnel's pieces reach
+  further than that as the path turns, and then a 64-cell window centred on the shadow focus (a point about 14 units
+  ahead of the camera) is kept. Pieces outside it are too far away, and too fogged, to matter in a reflection.
+- **A counting sort:** count how many pieces touch each cell; a running total turns the counts into each cell's
+  first slot in one long list of entries; then drop each piece into its cells' slots. Two passes over the pieces,
+  one over the cells, and no allocation once the arrays have grown to size.
+
+Measured CPU time, which `/bench` reports (the build and its upload calls, averaged over the timed frames after the
+warm-up): 0.02 ms a frame for a box scene of ~1,200 pieces, 0.16 ms for a tunnel of ~7,200, and 0.47 ms for the
+densest tunnel, ~21,800 pieces.
+
+**Getting it to the shader.** Two *texture buffers* (a buffer object read in a shader with `texelFetch`, like a 1D
+texture of any length): per cell, (first entry, count); per entry, `(kind << 24) | index`, where `index` is the
+piece's position in its kind's list. The pieces themselves aren't uploaded again: the instance buffers the draw calls
+already use are *also* bound as `RGBA32F` texture buffers, 5 texels (20 floats) per piece. GLSL 3.3 can't pick a
+sampler out of an array with an index computed at run time, so each traced kind has its own sampler (`uPiecesCyl`,
+`uPiecesSph`, `uPiecesElb`, `uPiecesRing`) and a `switch` picks one. They sit on texture units 2–7; the pipe shader
+already uses 0 (AO) and 1 (the shadow map).
+
+### Walking the grid: the 3D DDA
+
+`tracePipes()` visits exactly the cells a ray passes through, in order, with **Amanatides and Woo's 3D DDA**
+("digital differential analyser", the same idea as drawing a line on pixels):
+
+```
+    ┌─────┬─────┬─────┐     For each axis keep:
+    │     │     │   ↗ │       tMax    how far along the ray its next cell wall is
+    ├─────┼─────┼──/──┤       tDelta  how far apart that axis's walls are along the ray
+    │     │   ↗ │ /   │
+    ├─────┼──/──┼─────┤     Each step crosses whichever wall is nearest (the smallest tMax),
+    │  o──┼─    │     │     moves one cell along that axis, and adds tDelta to that tMax.
+    └─────┴─────┴─────┘
+```
+
+No cell is skipped and none is visited twice. A ray that starts outside the grid is first clipped to its box (the
+*slab test*: on each axis, the stretch of the ray between the two planes; the ray is inside where all three
+overlap). Each cell's pieces are tested and the nearest hit kept, and the walk **stops as soon as the best hit is
+nearer than the current cell's exit**: a piece can span cells, so a hit found while searching one cell may lie in a
+later one, but once it's inside the current cell, nothing in a later cell can be nearer. It gives up after
+`MAX_TRACE_CELLS` (48) cells and shows the sky. To check the walk, a temporary shader also tested every piece by
+brute force: the two agreed on every pixel (apart from valve wheels, which the check left out).
+
+### Intersections
+
+Each piece is read with `texelFetch`: start, axis, side, colour, then radius, sweep, metallic and roughness.
+
+- **Sphere:** the nearer root of the quadratic `|o + t·d − c|² = r²`. Only the nearer root: a ray from outside only
+  ever sees a ball's outside.
+- **Cylinder:** remove everything along the pipe's axis from the ray, and it becomes a 2D ray against a circle: the
+  same quadratic. A hit counts if it lands between the ends. **Plus the two end discs:** flanges are short, fat
+  cylinders, mostly seen face-on, and without their caps they'd be missing from reflections. A ray from outside can
+  only come in through the cap facing it.
+- **Bends and rings:** a torus is a quartic, with no closed form worth solving per pixel. Instead the shader
+  **sphere-traces its signed distance field (SDF)**: a function that says how far the nearest surface is from any
+  point. The ray can safely step that far without passing through anything, then ask again; near a surface the steps
+  shrink towards it. At most 16 steps (`ELBOW_STEPS`), stopping at a distance under 0.001, starting where the ray
+  enters the piece's bounding sphere. The distance is Inigo Quilez's *capped torus*: in a frame where the arc lies
+  in the xy plane, symmetric about +y (so +y points at the middle of the bend), mirror the point to x ≥ 0; if it lies
+  beyond the arc's end, measure to the end point, otherwise to the circle; subtract the tube radius. A ring uses the
+  same function with a half-angle of π, where it reduces to a plain torus. (It passes `(sin, cos) = (0, −1)`
+  exactly: in float, `sin(π)` is −8.7·10⁻⁸, which made the end-point test fire on one side and left a sliver of the
+  ring missing.) The normal at the hit is analytic: from the
+  nearest point on the centre circle out through the hit point.
+
+**Self-hits.** The ray starts at the pixel's position nudged 0.01 off the surface, and ignores hits nearer than 0.02,
+so it doesn't find the surface it starts from. With surface detail, a bumped normal can tip the reflection below the
+real surface, into the pipe, so the traced ray is lifted to just above the geometric surface. A ray hitting the
+*same* bend on its inner side is a real reflection, and allowed. Pieces are fattened for the ray cone (below), but
+never so far that the fattened surface reaches the ray's origin; that's why contacts reflect (see the cone section).
+
+### Which pixels trace
+
+`environment(R, rough, weight)` replaces the `sky(R, rough)` call in both versions of the shading (surface detail on
+and off), and everything multiplied onto it afterwards is unchanged, so a miss is exactly the old picture. `weight`
+is how visible the reflection will be: the Fresnel reflectance (its largest channel) times the metal boost,
+`mix(0.5, 2.4, metallic)`. Head-on paint is 0.04 × 0.5 = 0.02 and never traces; metal always does; paint at a grazing
+angle does. The traced pipe is blended in as `weight` goes from 0.2 to 0.3 rather than switched on at a threshold (a
+hard switch shows as an edge along paint, at the angle where tracing starts), and faded back to the sky as roughness
+goes from 0.35 to 0.75, standing in for a blurred reflection.
+
+### The ray cone: why one ray per pixel sparkled
+
+The first version did just the above. From a distance it looked right, but zoomed in, metal pipes were covered in
+**speckles**: pixels showing a reflected pipe next to pixels showing the sky, at random. The grid walk was fine (the
+brute-force check above); the problem was sampling. A curved mirror spreads a pixel's view wide: across a pipe 12
+pixels wide the reflection direction swings through 180°, so each pixel sees about 15° of the scene, and a thin pipe
+a few units away is much smaller than that. One ray per pixel hits it or misses it more or less at random, so the
+reflected scene turns to noise, and it would crawl as the camera moves. (MSAA doesn't help: it shades each pixel
+once.) It's the same problem as a texture squeezed into fewer pixels than it has texels, which mipmapping solves by
+averaging in advance.
+
+The fix treats each ray as a **cone** reaching out to the next pixel's ray, measured with screen-space derivatives
+of the reflection direction (`dFdx(R)`, `dFdy(R)`: how much it changes from one pixel to the next). Neighbouring
+cones overlap; half that radius, so they only just touched, left more noise.
+
+- Every piece is **fattened** by the cone's radius where the ray passes it, so every pixel whose cone touches a thin
+  pipe finds it, not just the few whose centre ray happens to.
+- It's blended in by how much of the cone it really fills, `cover = radius ÷ (radius + cone radius)`. A thin, distant
+  pipe comes out as a faint, soft streak: roughly the average a finely sampled image would show there.
+- The fattening stops at 0.4 units (`MAX_CONE`), because a piece is only listed in the cells it really touches;
+  fattened further, it would reach into cells whose lists don't include it. Past that width a cone could slip between
+  pieces that should have filled it and the noise would come back, so `cover` fades to 0 as the cone gets there:
+  anything reflected smaller than that is left to the sky.
+- End discs keep their real radius. Fattened, a pipe's cap would catch the rays leaving the next length of the same
+  pipe, whose surface runs right up to it, and dot the pipe with its own colour.
+- **The fattening never reaches the ray's origin.** Where a pipe runs into a ball, a ray leaving the pipe next to the
+  contact starts within a cone's width of the ball. Fattened by the full width, the ball would contain the ray's
+  origin: its near root would fall behind the ray, the ball would be dropped, and reflections vanished exactly where
+  pieces touch. So each piece is fattened by `min(width, room)`, where `room` is the distance from the origin to the
+  piece's *real* surface less 0.005 (`fatten()`): close to the origin a piece is fattened less, down to not at all,
+  and is still found. `cover` uses the width actually added; the fade towards `MAX_CONE` still uses the width the
+  cone asked for. A bend is skipped only when the ray starts inside its real tube.
+
+The result: flying, where pipes are big on screen, neighbours reflect cleanly and distant clutter fades to soft
+streaks. In a box scene the pipes are thin on screen, so only close neighbours (the balls and pipes around a joint,
+pipes running side by side) are resolved and the rest shows the sky as before; at higher resolutions more of it
+resolves. The edges of reflected pipes aren't anti-aliased (MSAA only smooths real geometry), and a little fine noise
+remains in the busiest reflections, mostly on big, close balls mirroring the tunnel.
+
+### Shading the hit
+
+`shadeHit()` lights the reflected pipe simply: its flat colour, metallic and roughness (no surface pattern), Lambert
+diffuse from both lights with the key light shadowed by the shadow map (`keyLightVisibilityAt(p, N)`, the pixel's own
+shadow test, asked at the hit point), the hemisphere ambient, and for metal a cheap **second bounce**: the sky it
+would mirror, tinted by its colour. Without that, metal seen in metal would be black, since metal has no diffuse. No
+highlights, no AO, and the second bounce never traces again. Then fog over the whole path the light travels, camera
+to pixel plus pixel to hit, with the main shading's formula, `f(d) = clamp(1 − exp(−k·d²), 0, 0.85)`. The pixel is
+fogged again at the end of `main()` over camera-to-pixel, though (reflection included), which the first version
+counted twice. So `shadeHit()` adds only the extra: two fog steps leave `(1 − fExtra)(1 − fCam)` of the colour, and
+for that to be `1 − fTot`, `fExtra = 1 − (1 − fTot) ÷ (1 − fCam)`. Copper (patina), galvanised zinc and cast iron ignore the
+palette colour, so with surface detail on, reflections give them a colour of their own too.
+
+### Depth prepass
+
+Normally a fragment hidden behind a nearer pipe gets shaded and then overwritten, which only wastes cheap shading.
+With a ray per fragment it gets expensive, and in the tunnel pipes overlap many layers deep. So with traced
+reflections the scene pass first draws every piece's depth only (with the shadow map's depth-only program, the
+camera's matrix, and colour writes off), then draws the lit pipes with the depth test at "less than or equal" and
+depth writes off: only the frontmost surface at each sample passes, and only it traces. With MSAA the depths match per
+sample. Both passes run the same vertex shader, so the depths come out identical. GLSL only promises that across two
+programs for outputs declared `invariant` (otherwise the compiler may order or fuse the arithmetic differently per
+program, and the depths can differ in the last bit), so with `TRACED` the vertex shader declares
+`invariant gl_Position`, and both programs are compiled with that define. The prepass saved 25–30%
+of the frame with tracing on (see the table).
+
+### Cost
+
+`/bench`, 1920×1080, 300 frames, RTX 3080, ms per frame. The flight rows use the settings the fly-through is
+usually run with here: Mixed finish, tunnel density 40%, flight speed 10, shadows, AO and bloom. The last column
+comes from a temporary build without the prepass, measured before the final round of fixes (fattening limit, fog,
+`invariant`), which left the other columns within 0.03 ms.
+
+| Scene | Off | On | On, without the depth prepass |
+|---|---|---|---|
+| Box, Metallic, still camera, 4× MSAA (~1,200 pieces) | 0.89 | 1.60 | 2.20 |
+| Flight, 8× MSAA, surface detail off (~7,200 pieces) | 1.81 | 3.12 | 4.13 |
+| Flight, 4× MSAA, surface detail on | 1.98 | 3.07 | 4.46 |
+| Flight, 8×, density 100% (~21,800 pieces) | 3.83 | 5.78 | |
+| Flight, 8×, every pipe Metallic, smooth elbows (~4,900 pieces) | 1.69 | 5.51 | |
+
+The CPU's grid build is included (0.02–0.47 ms, above). The worst case is an all-metal tunnel with curved elbows:
+every pixel traces, and bends are the expensive shape (up to 16 SDF steps each). Halving `MAX_TRACE_CELLS` and
+`ELBOW_STEPS` together saved 5–11%, at the cost of shorter reflections, so they stayed as they are. All of it fits
+well inside a 60 Hz frame (16.7 ms) on this card; on a weaker GPU, or across several big monitors, it's the setting
+to leave off.
+
+### Limitations
+
+- One bounce: reflected pipes don't show their own reflections (metal seen in metal shows the sky, as a second
+  bounce).
+- Reflected pipes are flat-shaded: no surface pattern (rust, scratches), no highlights, no AO.
+- Rough reflections aren't blurred, only faded to the sky's soft strips.
+- Teapots aren't traced: they're rare, and a mesh with no closed-form intersection.
+- One ray per pixel: reflections of thin or distant pipes are faded out rather than resolved (the ray cone above),
+  so box scenes show mostly close-up reflections, and the edges of reflected pipes aren't anti-aliased.
+- Only the nearest hit is kept. When a thin piece is hit through the cone at low `cover`, the rest of the cone shows
+  the sky, not the pipe behind the thin piece, so thin fittings in front of a reflected pipe can leave faint,
+  sky-coloured gaps in it.
+- The grid covers at most 64 cells a side; in flight, pieces outside that window are never reflected (they're deep
+  in the fog).
 
 ## MSAA (anti-aliasing)
 
@@ -407,7 +631,7 @@ rows are the point):
 A 60 Hz frame is 16.7 ms, so the last row is the one combination that can't hold 60 fps across three monitors:
 8× MSAA at that size means resolving 87 million samples a frame, and the depth-of-field gather runs at full
 resolution on top. The fly-through tunnel has many more pieces than a box scene (about 10,000 against 1,300 at
-the default density); its costs are in the *Shadows* and *Surfaces* sections above.
+the default density); its costs are in the *Shadows*, *Surfaces* and *Traced reflections* sections above.
 
 At 60 fps a frame lasts 16.7 ms, and with VSync the GPU idles for the rest. So in classic mode it's idle more
 than 95% of the time.
@@ -471,6 +695,11 @@ infinity, and the blur's `inf - inf` is NaN.
 | `BaseValues` | `PipeWorld.cs` | each surface's starting metallic/roughness |
 | `detail()` | `PipeFragment` | how early fine patterns fade with distance (sparkle vs. blur) |
 | `widen` (specular anti-aliasing) | `PipeFragment` | highlight stability on thin, distant pipes vs. sharpness |
+| `MAX_TRACE_CELLS` | `PipeFragment` | how many grid cells a reflection ray walks before giving up on the sky (48): cost vs. how far reflections reach |
+| `ELBOW_STEPS` | `PipeFragment` | sphere-tracing steps per bend or ring (16): cost vs. holes in reflected bends |
+| `MAX_CONE` | `PipeFragment` | how far pieces are fattened for the ray cone (0.4 units); reflections fade out past it: noise vs. how much of a busy scene is reflected |
+| `smoothstep(0.2, 0.3, weight)`, `smoothstep(0.35, 0.75, rough)` in `environment()` | `PipeFragment` | which pixels trace a reflection (paint at grazing angles, metal), and how rough before it fades to the sky |
+| `MaxCells` | `ReflectionGrid.cs` | the most grid cells per axis (64); in flight, how far around the shadow focus pieces can be reflected |
 
 ## Further reading
 
@@ -479,3 +708,6 @@ infinity, and the blur's `inf - inf` is NaN.
 - Jorge Jimenez, *Next Generation Post Processing in Call of Duty: Advanced Warfare* (SIGGRAPH 2014): the bloom filters
 - Dennis Gustafsson, *Bokeh depth of field in a single pass* (blog post): the DoF approach
 - Krzysztof Narkowicz, *ACES Filmic Tone Mapping Curve*: the tonemap fit used here
+- John Amanatides and Andrew Woo, *A Fast Voxel Traversal Algorithm for Ray Tracing* (Eurographics 1987): the grid
+  walk used by traced reflections
+- Inigo Quilez, *Distance functions* (iquilezles.org): the capped torus, and many other shapes' SDFs

@@ -193,6 +193,9 @@ internal sealed unsafe class GLHost : IDisposable
             RenderViews(views, fbo, width, height);
             _gl.Finish();
         }
+        // The grid-build average should cover the timed frames only, not the warm-up's first (JIT-compiled,
+        // array-growing) builds.
+        foreach (var view in views) view.Renderer.ResetGridStats();
         clock.Restart();
         var pieces = 0; // the busiest frame's count: scenes fade out and restart, so the last frame's can be tiny
         for (var i = 0; i < frames; i++)
@@ -203,13 +206,17 @@ internal sealed unsafe class GLHost : IDisposable
         }
         _gl.Finish();
         var ms = clock.Elapsed.TotalMilliseconds / frames;
+        // Traced reflections rebuild their grid on the CPU every frame: report that part on its own too.
+        var grid = views[0].Renderer.AverageGridBuildMilliseconds is { } gridMs
+            ? $"; reflection grid build {gridMs:F3} ms/frame (CPU)"
+            : "";
 
         _gl.DeleteFramebuffer(fbo);
         _gl.DeleteTexture(tex);
         foreach (var view in views) view.Dispose();
         File.WriteAllText(reportPath,
             $"{settings.Style} {width}x{height} in {views.Count} view(s), AA={settings.Antialiasing}: " +
-            $"{ms:F2} ms/frame ({1000 / ms:F0} fps max), {pieces} pieces at most" + Environment.NewLine);
+            $"{ms:F2} ms/frame ({1000 / ms:F0} fps max), {pieces} pieces at most{grid}" + Environment.NewLine);
     }
 
     /// <summary>

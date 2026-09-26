@@ -35,12 +35,21 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 
 ## Ideas
 
-- **Ray-traced reflections:** the hardware ray tracing on RTX-class cards can't be reached from OpenGL (it needs
-  Vulkan or DirectX 12), but reflections can be traced in our own shader code: the pipes sit on a grid, and a grid
-  is a ready-made structure for stepping a reflection ray cell by cell, testing only the few pipes in each. Metal
-  pipes would then mirror the coloured pipes around them. Probably several milliseconds a frame, so an option that
-  stays off on weak GPUs; the curved elbows are the hard part to trace exactly. Start with the box scenes, where
-  metal pipes sit close enough to reflect each other.
+- **Blurred reflections for rough surfaces:** traced reflections only fade to the sky as roughness rises. A few
+  jittered rays, or tracing a wider cone (the ray cone is already there), would give real glossy blur.
+- **Surface patterns on reflected pipes:** reflected pipes are flat-shaded. Calling `surface()` at the hit would
+  show rust and scratches in reflections too, at the cost of the noise functions per reflected pixel.
+- **Teapots in reflections:** the one piece not traced. A bounding sphere with the teapot's colour would do at the
+  size it's usually seen.
+- **Incremental reflection grid:** the grid is rebuilt from scratch every frame (0.16–0.47 ms of CPU in flight).
+  Finished chunks never change, so their part of the grid could be kept, and only growing pipes re-filed.
+- **Sharper reflections in box scenes:** pipes there are thin on screen, so one ray per pixel can only resolve close
+  neighbours and the ray cone fades the rest to the sky. Two or four rays per pixel, or accumulating over frames,
+  would let more of the box reflect.
+- **Keep a second hit for the cone's remainder:** a reflection ray keeps only the nearest hit, so when a thin piece
+  fills a small part of the cone, the rest shows the sky instead of the pipe behind it, and thin fittings leave faint
+  sky-coloured gaps in reflected pipes. Keeping the next hit too, and blending it into what the first doesn't cover,
+  would fill them.
 - **Presets:** a dropdown of starting points (Default, Classic 1995, Zen flight, Wild flight, Low power), and
   perhaps "save current as" for the user's own.
 - **"Flex" pipes:** ribbed flexible conduit (a ripple in the cylinder shader's radius along its length).
@@ -74,3 +83,5 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - Course complexity slider (zen to wild: straight lengths and maneuver mix), tunnel density slider, a pilot who varies the speed, and
   momentum in the gentle curves
 - Frame pacing that sleeps instead of letting the driver spin: CPU from up to a full core down to 7–15%
+- Traced reflections (optional): metal pipes mirror the pipes around them, traced in the shader through a grid of
+  the scene rebuilt every frame; about +1.1–1.3 ms a frame in flight at 1080p
