@@ -132,6 +132,7 @@ There's no windowing library because preview mode must parent into a foreign HWN
 - [docs/RENDERING.md](docs/RENDERING.md): the graphics techniques, pass by pass (instancing, shading, surfaces,
   traced reflections, shadows, HDR, SSAO, bloom, depth of field, tonemapping).
 - [docs/ROADMAP.md](docs/ROADMAP.md): ideas, known issues, and what's done.
+- [CHANGELOG.md](CHANGELOG.md): notable user-visible changes, by date.
 
 ## License
 
