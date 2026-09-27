@@ -141,9 +141,9 @@ internal sealed unsafe class StatsOverlay : IDisposable
     /// (<paramref name="left"/>, <paramref name="top"/>) plus the margin, in window pixels from the top-left.
     /// Also ends the frame's GPU timing (the overlay's own drawing counts as "HUD").
     /// </summary>
-    public void Draw(int windowWidth, int windowHeight, int left, int top, int viewCount)
+    public void Draw(int windowWidth, int windowHeight, int left, int top, int viewCount, int drawnWidth, int drawnHeight)
     {
-        UpdatePanel(windowWidth, windowHeight, viewCount);
+        UpdatePanel(drawnWidth, drawnHeight, viewCount);
 
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
         _gl.Disable(EnableCap.DepthTest);

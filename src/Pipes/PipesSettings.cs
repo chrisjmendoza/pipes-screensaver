@@ -82,6 +82,14 @@ public sealed class PipesSettings
     /// </summary>
     public bool SeparateMonitors { get; set; } = true;
 
+    /// <summary>
+    /// With several monitors, draw the pipes on the main monitor only and leave the others black. The fullscreen
+    /// window still covers every monitor (that's what hides the desktop and catches the mouse and keyboard); only
+    /// the drawing shrinks, to about a third of the work on a three-monitor desktop, which is what lets a heavier
+    /// quality preset keep up. When this is on, <see cref="SeparateMonitors"/> doesn't matter.
+    /// </summary>
+    public bool MainMonitorOnly { get; set; } = false;
+
     /// <summary>Fly-through only: how fast the camera flies, in grid cells per second.</summary>
     public float FlightSpeed { get; set; } = 5f;
 

@@ -11,8 +11,9 @@ namespace Pipes;
 /// Development extras:
 ///   /w                          run in a normal window (Esc to quit)
 ///   /shot &lt;file.png&gt; [seconds] [width] [height] [seed] [monitors]   render one frame offscreen and exit
-///   /bench &lt;report.txt&gt; [frames] [width] [height] [monitors]        time rendering offscreen, write ms/frame
-/// Adding the word "monitors" to either uses the real fullscreen monitor layout instead of width x height.
+///   /bench &lt;report.txt&gt; [frames] [width] [height] [monitors] [flight]  time rendering offscreen, write ms/frame
+/// Adding the word "monitors" to either uses the real fullscreen monitor layout instead of width x height; "flight"
+/// on /bench measures the fly-through tunnel (after take-off) rather than the box being built.
 /// Used by the settings dialog:
 ///   /autotune &lt;result.json&gt;    "Test this PC": time each quality preset on the real desktop, write the results
 ///                               (run in a child process, so a graphics driver crash can't take the dialog down)
@@ -95,9 +96,10 @@ internal static class Program
         var width = int.Parse(At(3, "1920"), CultureInfo.InvariantCulture);
         var height = int.Parse(At(4, "1080"), CultureInfo.InvariantCulture);
         var monitors = HasFlag(args, "monitors");
+        var flight = HasFlag(args, "flight");
 
         using var host = GLHost.CreateOffscreen();
-        host.Benchmark(settings, width, height, frames, path, monitors);
+        host.Benchmark(settings, width, height, frames, path, monitors, flight);
     }
 
     private static void Autotune(string[] args, PipesSettings settings)
