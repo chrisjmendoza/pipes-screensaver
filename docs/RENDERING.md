@@ -219,7 +219,7 @@ The surfaces (sizes to keep in mind: pipes are 0.12–0.24 units thick, a cell i
 | Surface | What it imitates |
 |---|---|
 | `Gloss` | glossy paint, with faint grime blotches that vary the sheen ±0.1 and the colour ±3% |
-| `Satin` | the same, rougher (0.55) |
+| `Satin` | the same, rougher (0.7: matte enough to tell from gloss beside it) |
 | `Polished` | polished metal tinted by the palette colour: smudged patches and fine scratches that run mostly along the pipe |
 | `Brushed` | brushed metal: anisotropic GGX (0.25 along, 0.6 across) and a fine grain that varies across the pipe only |
 | `WornPaint` | gloss paint chipped and scratched to bare steel (more at joints, in clusters), dirt streaked vertically |
@@ -228,7 +228,8 @@ The surfaces (sizes to keep in mind: pipes are 0.12–0.24 units thick, a cell i
 | `Galvanized` | zinc-coated steel with a "spangle": ~0.12-unit crystal cells, each its own roughness and brightness |
 | `CastIron` | nearly black, rough, with a sand-cast bump and a few brighter speckles |
 
-Valve stems and bolts are `Brushed`; valve wheels stay `Gloss`. The **Finish** setting picks them: Plastic → Gloss,
+Valve stems and bolts are `Brushed`; valve wheels stay `Gloss`. The **Finish** setting picks them: Plastic → Gloss or Satin (two pipes in five satin, so the
+detail switch shows on the default finish too),
 Metallic → Polished, Weathered → mostly worn paint and rust with some patina, galvanised, cast iron and brushed,
 and Mixed → a bit of everything, mostly clean.
 

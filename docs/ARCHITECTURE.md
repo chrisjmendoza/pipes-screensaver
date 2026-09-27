@@ -694,6 +694,12 @@ files are deleted afterwards.
 - Presets only get heavier, so the first that goes past the budget ends the test (its numbers are still reported);
   a merely Tight one doesn't stop it. The recommendation is the last Comfortable preset, or failing that the last
   Tight one, or Lite if even that couldn't hold the refresh.
+- The rows are measured with the user's own pipes, and the report says so in words (`testedWith`), because a
+  different finish or camera costs differently. One more row covers the worst case for traced reflections: metal
+  pipes fire a ray on every pixel, so the heaviest reflecting preset that held the refresh is measured again on
+  fresh scenes built with the Metallic finish (`"variant": "all metal"`). A finish belongs to the scene, so unlike
+  a preset it can't be swapped into the existing views. The recommendation ignores that row; the results window
+  explains it instead.
 
 The report is JSON (the `AutotuneReport` record):
 
@@ -701,18 +707,20 @@ The report is JSON (the `AutotuneReport` record):
 {
   "refreshHz": 59, "budgetMs": 16.949, "targetMs": 12.712,
   "width": 5680, "height": 1920, "viewCount": 3,
-  "renderer": "NVIDIA GeForce RTX 3080/PCIe/SSE2", "camera": "FlyThrough", "simulatedSeconds": 39.85,
+  "renderer": "NVIDIA GeForce RTX 3080/PCIe/SSE2", "camera": "FlyThrough",
+  "testedWith": "the plastic finish, ball joints and fly-through at 60% tunnel density", "simulatedSeconds": 39.85,
   "results": [
-    { "preset": "Lite", "avgMs": 2.708, "p90Ms": 3.278, "verdict": "Comfortable" },
+    { "preset": "Lite", "avgMs": 2.708, "p90Ms": 3.278, "verdict": "Comfortable", "variant": null },
     ...
-    { "preset": "Ultra", "avgMs": 13.906, "p90Ms": 15.171, "verdict": "TooSlow" }
+    { "preset": "Ultra", "avgMs": 12.04, "p90Ms": 12.56, "verdict": "Comfortable", "variant": null },
+    { "preset": "Ultra", "avgMs": 14.9, "p90Ms": 15.4, "verdict": "Tight", "variant": "all metal" }
   ],
-  "recommended": "High"
+  "recommended": "Ultra"
 }
 ```
 
-`AutotuneResultsForm` shows it as a table (preset, frame time, fps, and ✓, "✓ little to spare" or "too slow"), the
-budget line, and the `GL_RENDERER` string. If that names an Intel chip or Windows' software renderer, it adds a
+`AutotuneResultsForm` shows it as a table (preset, frame time, fps, and ✓, "✓ little to spare" or "too slow", with
+the all-metal row last), the budget line, the `GL_RENDERER` string, and what it tested with. If that names an Intel chip or Windows' software renderer, it adds a
 note: on laptops with switchable graphics, Windows often runs small programs on the integrated chip unless told otherwise in Settings >
 System > Display > Graphics. **Use High** (or whichever) sets the Quality dropdown; as with everything in the
 dialog, nothing is saved until OK. If the child exits with an error code, times out, or leaves no readable report,

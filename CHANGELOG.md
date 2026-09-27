@@ -42,12 +42,24 @@ Changes merged to `main` since the last release go here, and move under a new ve
   preset and which graphics chip was used, with a hint for laptops that ran it on the integrated chip. The test
   runs in a separate process, so a graphics driver crash just fails the test instead of closing the settings. (docs/ARCHITECTURE.md, "Test this PC")
 - `/autotune <result.json>` command behind the button, which writes the measurements as JSON.
+- **Test this PC** says which pipes it measured with (finish, joints, camera), since those change the cost too,
+  and adds an "all metal" row: the heaviest preset with traced reflections that kept up, measured again on scenes
+  where every pipe is metal, the worst case for reflections. So you know before switching to the Metallic finish
+  whether it would still keep up. The recommendation itself is still for your current pipes.
 - **On battery** dropdown next to Quality: while a laptop runs on its battery, hold the graphics settings down to
   a preset of your choosing, and let go again when it's plugged back in. Off by default. It's a ceiling rather than
   a setting, so running something lighter already means nothing changes, and like any preset it moves only the
   graphics settings — the pipes and the camera stay put. Noticed within two seconds of the lead moving, and applied
   by rebuilding the renderers around the scene that's already on screen. Does nothing on a machine with no battery.
   (docs/ARCHITECTURE.md, "On battery")
+### Changed
+
+- **Plastic finish with surface detail on** now gives each pipe either a glossy or a satin sheen (two in five
+  satin) instead of glossy for all: a crisp highlight line on the glossy pipes, a soft sheen on the satin ones.
+  Fair warning: on paint the difference is subtle, because paint reflects only 4% head-on, so the switch was
+  never going to do much for plain plastic; it's the metal and weathered finishes that change a lot. The
+  checkbox now says so ("subtle on plain paint"), and the finish reads "Plastic (glossy and satin)". With surface
+  detail off, every pipe is glossy as before.
 
 ## [1.0.0] - 2026-09-26
 

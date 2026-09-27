@@ -23,11 +23,17 @@ internal enum AutotuneVerdict
 /// <param name="AvgMs">Average cost of a frame, in milliseconds.</param>
 /// <param name="P90Ms">90th percentile: nine frames in ten took this long or less. What the verdict is judged on.</param>
 /// <param name="Verdict">How <paramref name="P90Ms"/> compares to the report's target and budget.</param>
-internal sealed record AutotuneResult(QualityPreset Preset, double AvgMs, double P90Ms, AutotuneVerdict Verdict);
+/// <param name="Variant">
+/// Null for the ordinary rows, measured with the user's own pipes. "all metal" for the worst-case row: the same
+/// preset measured on scenes with the Metallic finish, the dearest pipes for traced reflections.
+/// </param>
+internal sealed record AutotuneResult(QualityPreset Preset, double AvgMs, double P90Ms, AutotuneVerdict Verdict, string? Variant = null);
 
 /// <summary>
 /// What /autotune found, written as JSON for the settings dialog to read back. <see cref="Results"/> holds the
-/// presets tried, lightest first; it stops after the first that didn't fit, since heavier ones won't either.
+/// presets tried, lightest first; it stops after the first that didn't fit, since heavier ones won't either. A
+/// worst-case row (<see cref="AutotuneResult.Variant"/>) may follow. <see cref="TestedWith"/> names the pipes the
+/// ordinary rows were measured with, in words, since a different finish or camera costs differently.
 /// </summary>
 internal sealed record AutotuneReport(
     int RefreshHz,
@@ -38,6 +44,7 @@ internal sealed record AutotuneReport(
     int ViewCount,
     string Renderer,
     CameraMotion Camera,
+    string TestedWith,
     double SimulatedSeconds,
     List<AutotuneResult> Results,
     QualityPreset Recommended);

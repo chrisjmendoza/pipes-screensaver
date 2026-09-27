@@ -127,6 +127,9 @@ public sealed class PipeWorld
     private readonly List<Pipe> _active = [];
     private int _spawned;
     private int _lastColor = -1;
+    /// <summary>With the Plastic finish and surface detail on, this share of the pipes get a satin sheen instead of gloss.</summary>
+    private const float SatinShare = 0.4f;
+
     /// <summary>Pipes given a material so far: the input to <see cref="Hash01"/> for their seed and wear.</summary>
     private int _materialCount;
 
@@ -563,21 +566,26 @@ public sealed class PipeWorld
     {
         if (!SurfaceDetail) return NextPlainMaterial();
 
+        // Seed, wear, and the plastic finish's sheen come from a hash of a counter rather than from _rng. Drawing
+        // them from _rng would shift every random choice after it, so the same /shot seed would grow different
+        // pipes than before surfaces existed. This way the layouts stay comparable (and Plastic, Metallic and Mixed
+        // draw exactly as many random numbers as they always did).
+        var n = _materialCount++;
+        var seed = Hash01(n, 1);
+        var wearRoll = Hash01(n, 2);
+
         var surface = _settings.Finish switch
         {
             Finish.Metallic => Surface.Polished,
             Finish.Weathered => Pick(WeatheredSurfaces),
             Finish.Mixed => Pick(MixedSurfaces),
-            _ => Surface.Gloss,
+            // Plastic: glossy paint, or satin for some pipes: a crisp highlight line on the glossy ones, a soft
+            // sheen on the satin ones. Gloss alone looked no different from surface detail switched off (its grime
+            // is faint by design). Even so the difference stays subtle on paint: a painted surface reflects only 4%
+            // head-on, so its roughness only shows in the highlight. Metal and weathered finishes are where the
+            // switch does its real work.
+            _ => Hash01(n, 3) < SatinShare ? Surface.Satin : Surface.Gloss,
         };
-
-        // Seed and wear come from a hash of a counter rather than from _rng. Drawing them from _rng would shift
-        // every random choice after it, so the same /shot seed would grow different pipes than before surfaces
-        // existed. This way the layouts stay comparable (and Plastic, Metallic and Mixed draw exactly as many
-        // random numbers as they always did).
-        var n = _materialCount++;
-        var seed = Hash01(n, 1);
-        var wearRoll = Hash01(n, 2);
         var wear = surface switch
         {
             Surface.WornPaint => float.Lerp(0.3f, 0.8f, wearRoll),
@@ -613,7 +621,7 @@ public sealed class PipeWorld
     /// </summary>
     private static (float Metallic, float Roughness) BaseValues(Surface surface) => surface switch
     {
-        Surface.Satin => (0f, 0.55f),
+        Surface.Satin => (0f, 0.7f),      // matte enough to tell from a glossy pipe beside it (0.55 wasn't)
         Surface.Polished => (0.9f, 0.15f),
         Surface.Brushed => (0.9f, 0.25f), // along the pipe; the shader makes it rougher across
         Surface.Rusty => (0f, 0.35f),     // the paint between the rust

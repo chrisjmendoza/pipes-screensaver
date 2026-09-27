@@ -20,7 +20,10 @@ public enum JointStyle
 /// </summary>
 public enum Finish
 {
-    /// <summary>Glossy plastic, closest to the 90s look.</summary>
+    /// <summary>
+    /// Painted plastic, closest to the 90s look: glossy, or with <see cref="PipesSettings.SurfaceDetail"/> a mix of
+    /// glossy and satin pipes.
+    /// </summary>
     Plastic,
     /// <summary>Polished metal with coloured reflections.</summary>
     Metallic,
