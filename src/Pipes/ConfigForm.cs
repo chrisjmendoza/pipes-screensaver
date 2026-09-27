@@ -20,6 +20,7 @@ internal sealed class ConfigForm : Form
     private readonly Label _densityValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox _varySpeed = Check("Pilot varies the speed");
     private readonly CheckBox _separateMonitors = Check("Own scene on each monitor");
+    private readonly CheckBox _mainOnly = Check("Main monitor only (the others go black)");
 
     private readonly ComboBox _joints = Dropdown("Classic (ball joints)", "Smooth elbows", "Mixed");
     private readonly ComboBox _finish = Dropdown("Glossy plastic", "Metallic", "Weathered (rust, patina, worn paint)", "Mixed (per pipe)");
@@ -85,7 +86,8 @@ internal sealed class ConfigForm : Form
             ("Pipes per scene", _perScene),
             ("Growth speed", WithValue(_speed, _speedValue)),
             ("Camera", _camera),
-            ("", _separateMonitors));
+            ("", _separateMonitors),
+            ("", _mainOnly));
         _flightGroup = Group("Flight (fly-through camera)", _leftGroups, _leftLabels,
             ("Flight speed", WithValue(_flightSpeed, _flightSpeedValue)),
             ("", _varySpeed),
@@ -152,6 +154,8 @@ internal sealed class ConfigForm : Form
 
         LoadFrom(settings);
         _camera.SelectedIndexChanged += (_, _) => UpdateFlightGroup();
+        // With one monitor drawn, "own scene on each" has nothing to decide.
+        _mainOnly.CheckedChanged += (_, _) => _separateMonitors.Enabled = !_mainOnly.Checked;
 
         // Hooked up after loading, so opening the dialog doesn't count as the user picking a style.
         _style.SelectedIndexChanged += (_, _) =>
@@ -257,7 +261,10 @@ internal sealed class ConfigForm : Form
     {
         var snapshot = new PipesSettings();
         ApplyTo(snapshot);
-        var (width, height) = GLHost.VirtualScreenSize();
+        // The size the test will draw: the main monitor alone if that's all the pipes will use.
+        var (width, height) = _mainOnly.Checked && Screen.PrimaryScreen is { } main
+            ? (main.Bounds.Width, main.Bounds.Height)
+            : GLHost.VirtualScreenSize();
         var hz = GLHost.PrimaryRefreshRate();
 
         using var cancel = new CancellationTokenSource();
@@ -480,6 +487,8 @@ internal sealed class ConfigForm : Form
         _densityValue.Text = $"{s.TunnelDensity * 10}%";
         UpdateFlightGroup();
         _separateMonitors.Checked = s.SeparateMonitors;
+        _mainOnly.Checked = s.MainMonitorOnly;
+        _separateMonitors.Enabled = !s.MainMonitorOnly;
         _joints.SelectedIndex = (int)s.Joints;
         _finish.SelectedIndex = (int)s.Finish;
         _thickness.Checked = s.VaryThickness;
@@ -517,6 +526,7 @@ internal sealed class ConfigForm : Form
         s.CourseComplexity = _complexity.Value;
         s.TunnelDensity = _density.Value;
         s.SeparateMonitors = _separateMonitors.Checked;
+        s.MainMonitorOnly = _mainOnly.Checked;
         s.Joints = (JointStyle)_joints.SelectedIndex;
         s.Finish = (Finish)_finish.SelectedIndex;
         s.VaryThickness = _thickness.Checked;

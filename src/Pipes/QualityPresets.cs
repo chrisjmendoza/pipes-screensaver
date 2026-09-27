@@ -33,8 +33,9 @@ public enum QualityPreset
 /// </para>
 /// <list type="bullet">
 /// <item>Classic style: about a tenth of the modern style (0.35 against 1.5 ms a frame in a box scene).</item>
-/// <item>MSAA: every extra sample is more memory to fill and resolve; 8× across three monitors is where the modern
-/// style stopped holding 60 fps.</item>
+/// <item>MSAA: every extra sample is more memory to fill and resolve. Going from 4× to 8× in the fly-through tunnel
+/// across three monitors cost 3.6 ms a frame (7.6 to 11.2), more than the traced reflections (2.4 ms), for a
+/// difference that's close to invisible at that many pixels. So no preset uses 8×; it stays a manual choice.</item>
 /// <item>Surface detail: +0.4-0.7 ms in flight (noise functions per pixel, on every layer of the tunnel).</item>
 /// <item>Shadows: +0.2-0.45 ms (a shadow map drawn every frame).</item>
 /// <item>Ambient occlusion: a second, depth-and-normals drawing of every piece plus two full-screen passes.</item>
@@ -82,8 +83,9 @@ internal static class QualityPresets
                 SetModern(settings, samples: 4, surfaces: true, shadows: true, ao: true, traced: false);
                 break;
             case QualityPreset.Ultra:
-                // Traced reflections and 8× MSAA on top. For a fast card, or a single 60 Hz screen.
-                SetModern(settings, samples: 8, surfaces: true, shadows: true, ao: true, traced: true);
+                // High plus traced reflections, the one effect that changes the look at this level. (8× MSAA was
+                // part of it at first, until it turned out to be the dearer half: see the MSAA note above.)
+                SetModern(settings, samples: 4, surfaces: true, shadows: true, ao: true, traced: true);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(preset), preset, null);

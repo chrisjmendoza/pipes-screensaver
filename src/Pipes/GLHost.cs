@@ -68,7 +68,8 @@ internal sealed unsafe class GLHost : IDisposable
     {
         CreateWindow(visible: true);
         var (w, h) = ClientSize();
-        var perMonitor = _mode == HostMode.Fullscreen && settings.SeparateMonitors;
+        // Only fullscreen lays views out by monitor (a window or the preview is one view whatever the settings say).
+        var layout = _mode == HostMode.Fullscreen;
 
         // On battery, the graphics settings are held down to PipesSettings.BatteryQuality. Only the renderers (and
         // the stats overlay's description of what's being measured) see the capped copy: the scenes are built from
@@ -80,7 +81,10 @@ internal sealed unsafe class GLHost : IDisposable
             ? QualityPresets.LimitedTo(cap, settings)
             : settings;
 
-        var views = CreateViews(settings, w, h, perMonitor, _ => new Random(), Quality(onBattery));
+        var views = CreateViews(settings, w, h, layout, _ => new Random(), Quality(onBattery));
+        // A single view that covers the window follows it when it's resized. Per-monitor views, and the main
+        // monitor's view on its own, are fixed to their monitors.
+        var followWindow = views.Count == 1 && views[0].Width == w && views[0].Height == h;
 
         // Pace frames by sleeping until the monitor's vertical blank, rather than letting the driver wait (which it
         // may do by spinning a CPU core). See VBlankWaiter. Null if unavailable: then the driver paces as before.
@@ -127,8 +131,7 @@ internal sealed unsafe class GLHost : IDisposable
                 {
                     _resized = false;
                     (w, h) = ClientSize();
-                    // A single view follows the window. Per-monitor views are fixed to the monitors.
-                    if (views.Count == 1) views[0].Resize(w, h);
+                    if (followWindow) views[0].Resize(w, h);
                 }
                 if (_moved)
                 {
@@ -181,7 +184,9 @@ internal sealed unsafe class GLHost : IDisposable
                 if (stats != null)
                 {
                     var (left, top) = StatsCorner(views);
-                    stats.Draw(w, h, left, top, views.Count);
+                    // The footer names the size being drawn: the main monitor's when that's all that is.
+                    var (drawnW, drawnH) = views.Count == 1 ? (views[0].Width, views[0].Height) : (w, h);
+                    stats.Draw(w, h, left, top, views.Count, drawnW, drawnH);
                 }
                 Win32.SwapBuffers(_hdc);
 
@@ -240,13 +245,19 @@ internal sealed unsafe class GLHost : IDisposable
     /// possible and writes the average GPU+CPU cost per frame to <paramref name="reportPath"/>. No VSync here, so
     /// the number is the real work per frame, not the monitor's refresh interval. With <paramref name="monitors"/>,
     /// measures the real fullscreen layout instead of one <paramref name="width"/> x <paramref name="height"/> view.
+    /// With <paramref name="flight"/>, measures the fly-through tunnel rather than the box being built.
     /// </summary>
-    public void Benchmark(PipesSettings settings, int width, int height, int frames, string reportPath, bool monitors)
+    public void Benchmark(PipesSettings settings, int width, int height, int frames, string reportPath, bool monitors, bool flight)
     {
         if (monitors) (width, height) = VirtualScreenSize();
         var views = CreateViews(settings, width, height, monitors, i => new Random(1 + i));
-        for (var t = 0f; t < 12f; t += 1f / 60f) // let the scenes fill up first
-            foreach (var view in views) view.Update(1f / 60f);
+        // Let the scenes fill up first. In fly-through, 12 seconds in is still the box being built, which costs a
+        // fraction of the tunnel (4.7 against 14 ms for Ultra across three monitors, when this was found out): "flight"
+        // waits for take-off and a few seconds of tunnel instead, the same moment /autotune measures.
+        if (flight) SimulateForAutotune(views, settings.Camera == CameraMotion.FlyThrough);
+        else
+            for (var t = 0f; t < 12f; t += 1f / 60f)
+                foreach (var view in views) view.Update(1f / 60f);
 
         var (fbo, tex) = CreateReadbackTarget(width, height);
 
@@ -283,7 +294,7 @@ internal sealed unsafe class GLHost : IDisposable
         _gl.DeleteTexture(tex);
         foreach (var view in views) view.Dispose();
         File.WriteAllText(reportPath,
-            $"{settings.Style} {width}x{height} in {views.Count} view(s), AA={settings.Antialiasing}: " +
+            $"{settings.Style} {width}x{height} in {views.Count} view(s){(flight ? " in flight" : "")}, AA={settings.Antialiasing}: " +
             $"{ms:F2} ms/frame ({1000 / ms:F0} fps max), {pieces} pieces at most{grid}" + Environment.NewLine);
     }
 
@@ -319,7 +330,9 @@ internal sealed unsafe class GLHost : IDisposable
         var targetMs = budgetMs * Pipes.Autotune.TargetShareOfBudget;
 
         // Fixed seeds, so running the test twice measures the same scenes.
-        var views = CreateViews(settings, width, height, settings.SeparateMonitors, i => new Random(1 + i));
+        var views = CreateViews(settings, width, height, true, i => new Random(1 + i));
+        // What the report calls the size: the main monitor's alone when that's all that's drawn.
+        var (drawnWidth, drawnHeight) = views.Count == 1 ? (views[0].Width, views[0].Height) : (width, height);
         var simulated = SimulateForAutotune(views, settings.Camera == CameraMotion.FlyThrough);
         var (fbo, tex) = CreateReadbackTarget(width, height);
 
@@ -377,7 +390,7 @@ internal sealed unsafe class GLHost : IDisposable
         var recommended = (results.LastOrDefault(r => r.Verdict == AutotuneVerdict.Comfortable)
             ?? results.LastOrDefault(r => r.Verdict == AutotuneVerdict.Tight))?.Preset ?? QualityPreset.Lite;
         Pipes.Autotune.Write(new AutotuneReport(
-            refreshHz, Math.Round(budgetMs, 3), Math.Round(targetMs, 3), width, height, views.Count,
+            refreshHz, Math.Round(budgetMs, 3), Math.Round(targetMs, 3), drawnWidth, drawnHeight, views.Count,
             _gl.GetStringS(StringName.Renderer) ?? "unknown", settings.Camera, simulated, results, recommended), resultPath);
     }
 
@@ -419,13 +432,23 @@ internal sealed unsafe class GLHost : IDisposable
     }
 
     /// <summary>
-    /// One view covering the whole target, or (with <paramref name="perMonitor"/> and more than one monitor) one per
-    /// monitor, each placed where that monitor sits within the virtual desktop.
+    /// The views for a target. Normally one covering the whole thing. With <paramref name="layout"/> (fullscreen, or
+    /// the "monitors" word on /shot and /bench) and more than one monitor, whatever the settings ask for: the main
+    /// monitor's view alone (the rest stays black), one per monitor, each placed where that monitor sits within the
+    /// virtual desktop, or one across everything.
     /// </summary>
-    private List<View> CreateViews(PipesSettings settings, int width, int height, bool perMonitor, Func<int, Random> rng, PipesSettings? renderSettings = null)
+    private List<View> CreateViews(PipesSettings settings, int width, int height, bool layout, Func<int, Random> rng, PipesSettings? renderSettings = null)
     {
-        if (perMonitor && MonitorLayout() is { Count: > 1 } monitors)
-            return [.. monitors.Select((m, i) => new View(_gl, settings, rng(i), m.X, m.Y, m.Width, m.Height, renderSettings))];
+        if (layout && MonitorLayout() is { Count: > 1 } monitors)
+        {
+            if (settings.MainMonitorOnly)
+            {
+                var main = monitors.FirstOrDefault(m => m.Primary, monitors[0]);
+                return [new View(_gl, settings, rng(0), main.X, main.Y, main.Width, main.Height, renderSettings)];
+            }
+            if (settings.SeparateMonitors)
+                return [.. monitors.Select((m, i) => new View(_gl, settings, rng(i), m.X, m.Y, m.Width, m.Height, renderSettings))];
+        }
         return [new View(_gl, settings, rng(0), 0, 0, width, height, renderSettings)];
     }
 
@@ -441,10 +464,11 @@ internal sealed unsafe class GLHost : IDisposable
 
     private void RenderViews(List<View> views, uint targetFbo, int width, int height)
     {
-        if (views.Count > 1)
+        if (views.Count > 1 || views[0].Width < width || views[0].Height < height)
         {
             // Monitors of different sizes or offsets leave parts of the virtual desktop that no screen shows. Nobody
-            // sees them live, but a screenshot would show leftover garbage there, so clear to black first.
+            // sees them live, but a screenshot would show leftover garbage there, so clear to black first. With the
+            // main monitor only, the other monitors are those parts, and everyone sees them: they must be black.
             _gl.BindFramebuffer(FramebufferTarget.Framebuffer, targetFbo);
             _gl.Viewport(0, 0, (uint)width, (uint)height);
             _gl.ClearColor(0f, 0f, 0f, 1f);
@@ -457,15 +481,16 @@ internal sealed unsafe class GLHost : IDisposable
     /// Every monitor's rectangle in window pixels. The fullscreen window covers the "virtual desktop", the smallest
     /// rectangle around all monitors, whose top-left can be negative (a monitor left of or above the main one), so
     /// each monitor is shifted by that origin. The process is per-monitor DPI aware, so these are real pixels.
+    /// The main monitor is the one whose top-left is the desktop's (0, 0): that's how Windows defines it.
     /// </summary>
-    private static List<(int X, int Y, int Width, int Height)> MonitorLayout()
+    private static List<(int X, int Y, int Width, int Height, bool Primary)> MonitorLayout()
     {
         var originX = Win32.GetSystemMetrics(Win32.SM_XVIRTUALSCREEN);
         var originY = Win32.GetSystemMetrics(Win32.SM_YVIRTUALSCREEN);
-        var monitors = new List<(int, int, int, int)>();
+        var monitors = new List<(int, int, int, int, bool)>();
         Win32.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr _, IntPtr _, ref Win32.RECT r, IntPtr _) =>
         {
-            monitors.Add((r.Left - originX, r.Top - originY, r.Right - r.Left, r.Bottom - r.Top));
+            monitors.Add((r.Left - originX, r.Top - originY, r.Right - r.Left, r.Bottom - r.Top, r.Left == 0 && r.Top == 0));
             return true;
         }, IntPtr.Zero);
         return monitors;

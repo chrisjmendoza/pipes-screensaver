@@ -31,7 +31,7 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
   the pilot can vary it), a course complexity slider goes from zen cruising to wild, maneuver after maneuver, and a
   tunnel density slider sets how full the walls are (the setting to turn down on a slower GPU).
 - **Quality presets:** a Quality dropdown in the settings (Lite, Low, Medium, High, Ultra) sets all the graphics
-  options at once, from the classic style up to traced reflections and 8x MSAA, without touching the pipes or the
+  options at once, from the classic style up to traced reflections, without touching the pipes or the
   camera. **Test this PC…** next to it times each preset on your screens at their refresh rate and recommends the
   highest one that keeps up, with room to spare. (On a laptop it also warns if it ran on the integrated graphics
   chip rather than the graphics card.)
@@ -42,7 +42,8 @@ A remake of the classic Windows 3D Pipes screensaver, touched up.
 - **Classic (lite) mode:** for nostalgia, or a slower PC. It renders like the 1990s original: low-poly pipes lit
   per vertex on a black background, no effects. It uses roughly a tenth of the GPU time of the modern style.
 - **Multi-monitor aware:** each monitor gets its own scene, framed for its shape (portrait monitors too), and
-  nothing is rendered in the gaps between monitors. Or, if you prefer, one scene spanning them all.
+  nothing is rendered in the gaps between monitors. Or, if you prefer, one scene spanning them all, or the pipes
+  on the main monitor only with the others black, which costs a third as much on a three-monitor desktop.
 - **Performance stats overlay:** optional, for the curious and for tuning: FPS, a live frame-time graph, 1% and
   0.1% lows, GPU and CPU time per frame against the refresh interval, the GPU time split by render pass, and GPU
   load, temperature, clocks, power and memory. It also spots a laptop drawing on its integrated GPU while the fast
@@ -77,13 +78,14 @@ Render a still offscreen (no window appears). Handy for checking visual changes:
 Pipes.exe /shot out.png [seconds=20] [width=1920] [height=1080] [seed=1] [monitors]
 ```
 
-Add `monitors` to render your whole desktop exactly as fullscreen would lay it out, one scene per monitor.
+Add `monitors` to render your whole desktop exactly as fullscreen would lay it out, one scene per monitor (or
+the main monitor only, if that's the setting).
 
 To measure how expensive a settings combination is, `/bench` warms the GPU up for a second and a half, then
 renders a few hundred frames offscreen (no VSync) and writes the average time per frame to a text file:
 
 ```powershell
-Pipes.exe /bench bench.txt [frames=300] [width=1920] [height=1080] [monitors]
+Pipes.exe /bench bench.txt [frames=300] [width=1920] [height=1080] [monitors] [flight]
 ```
 
 To try settings without touching your real ones, point `PIPES_SETTINGS` at another JSON file:
@@ -114,7 +116,7 @@ an elevated PowerShell. That copies it to System32 so "Pipes" appears in the Scr
 | `/c[:hwnd]` or none | Settings dialog |
 | `/w` | Windowed (dev) |
 | `/shot <png> [s] [w] [h] [seed] [monitors]` | Offscreen still (dev) |
-| `/bench <txt> [frames] [w] [h] [monitors]` | Time rendering, write ms/frame (dev) |
+| `/bench <txt> [frames] [w] [h] [monitors] [flight]` | Time rendering, write ms/frame (dev); `flight` measures the fly-through tunnel |
 | `/autotune <json>` | "Test this PC": time each quality preset on the real desktop, write a JSON report (used by the settings dialog) |
 
 Settings are stored at `%LOCALAPPDATA%\PipesScreensaver\settings.json`.

@@ -12,6 +12,12 @@ Changes merged to `main` since the last release go here, and move under a new ve
 
 ### Added
 
+- **Main monitor only** (Animation group, next to "Own scene on each monitor", off by default): with several
+  monitors, draw the pipes on the main one and leave the others black. The screensaver still covers every monitor;
+  it just does a third of the drawing on a three-monitor desktop, which is what lets Ultra keep up on one. "Test
+  this PC" measures whichever layout is chosen.
+- `/bench` takes the word `flight` to measure the fly-through tunnel after take-off; without it, the bench was
+  timing the box scene being built, at a fraction of the tunnel's cost.
 - **Performance stats overlay** (Graphics group: "Show performance stats", off by default; F3 toggles it in the
   windowed preview): a panel in the top-left corner of the main monitor with FPS, a live frame-time graph (frame
   interval, GPU and CPU time, and the refresh interval), average FPS, 1% and 0.1% lows and the worst frame over
@@ -23,7 +29,9 @@ Changes merged to `main` since the last release go here, and move under a new ve
 - **Quality presets:** a Quality dropdown at the top of the Graphics group (Lite, Low, Medium, High, Ultra) sets
   the style, anti-aliasing, surface detail, shadows, ambient occlusion, bloom and traced reflections in one go.
   It never changes the pipes, the camera or the other look settings, and shows "Custom" when the options don't
-  match a preset. High is the defaults; Ultra adds traced reflections and 8x MSAA; Lite is the classic style.
+  match a preset. High is the defaults; Ultra adds traced reflections; Lite is the classic style. (8× MSAA isn't
+  in any preset: measured in flight across three monitors, 4× to 8× costs more than the reflections do, for a
+  difference that's hard to see.)
   (docs/ARCHITECTURE.md, "Quality presets")
 - **Test this PC…** button next to it: times each preset for a moment on your real screens, at your monitor's
   refresh rate, and recommends the highest one whose frames (nine in ten) take at most three-quarters of the time

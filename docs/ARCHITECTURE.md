@@ -94,6 +94,10 @@ own `PipeRenderer` (with render targets sized to it), drawn into one rectangle o
 - Windowed, preview, and "one scene across all monitors": a single view covers the whole window.
 - Fullscreen with **Own scene on each monitor** (the default): `GLHost.MonitorLayout` asks Windows for every
   monitor's rectangle (`EnumDisplayMonitors`) and makes a view for each.
+- Fullscreen with **Main monitor only**: one view, framed for the main monitor (the one at the desktop's origin),
+  and the rest of the window is cleared to black every frame. The window still covers every monitor, since that's
+  what hides the desktop and catches the mouse and keyboard; only the drawing shrinks. On a three-monitor desktop
+  that's about a third of the work, which is the difference between Ultra keeping up and not.
 
 Why this matters on a real multi-monitor desktop, for example a portrait monitor left of the main one and a smaller
 one to the right, offset vertically:
@@ -599,7 +603,7 @@ matters of taste. From lightest to heaviest:
 | Low | Modern | 2× | off | off | off | on | off |
 | Medium | Modern | 4× | on | on | off | on | off |
 | High | Modern | 4× | on | on | on | on | off |
-| Ultra | Modern | 8× | on | on | on | on | on |
+| Ultra | Modern | 4× | on | on | on | on | on |
 
 High is exactly the defaults, so a fresh install reads "High" (a `Debug.Assert` in `QualityPresets` keeps the two
 in step). `QualityPresets.Match` goes the other way: which preset some settings amount to, or none (Custom). Any
@@ -726,7 +730,9 @@ a message box says so and suggests a lower preset.
   own view) instead of one width × height view. That's how the per-monitor mode was tested without taking over the
   screens.
 - `Pipes.exe /bench bench.txt 300 1920 1080` renders 300 frames offscreen with no VSync and writes the average
-  time per frame. It renders untimed for 1.5 seconds first: an idle GPU runs at a low clock, and a benchmark this
+  time per frame. Add the word `flight` to measure the fly-through tunnel: without it the bench simulates 12
+  seconds, which in that mode is still the box being built, at a fraction of the tunnel's cost (4.7 against 14 ms
+  for Ultra across three monitors, which is how that was noticed). It renders untimed for 1.5 seconds first: an idle GPU runs at a low clock, and a benchmark this
   short can finish before it speeds up (the same settings once measured anywhere from 2.5 to 13 ms a frame).
   `_gl.Finish()` before stopping the clock makes it include the GPU's work, not just the time the CPU took to
   queue commands. Combine it with `PIPES_SETTINGS` to compare settings. With traced reflections on, the report
