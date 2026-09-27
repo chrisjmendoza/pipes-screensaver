@@ -54,7 +54,8 @@ Nothing is committed to yet. Candidates, roughly smallest first:
   flight...), and perhaps "save current as" for the user's own. Quality presets, for the graphics cost alone, exist
   now (see Done); these would be about everything else.
 - **"Flex" pipes:** ribbed flexible conduit (a ripple in the cylinder shader's radius along its length).
-- **Performance mode:** half-resolution SSAO and DoF for integrated GPUs and very large multi-monitor setups.
+- **Performance mode:** half-resolution SSAO and DoF for integrated GPUs and very large multi-monitor setups. (The
+  quality presets, "Main monitor only" and the battery ceiling cover most of the need; this would be a further step.)
 
 ## Done
 
@@ -89,4 +90,8 @@ Nothing is committed to yet. Candidates, roughly smallest first:
 - Traced reflections (optional): metal pipes mirror the pipes around them, traced in the shader through a grid of
   the scene rebuilt every frame; about +1.1–1.3 ms a frame in flight at 1080p
 - Quality presets (Lite, Low, Medium, High, Ultra) for the graphics settings, and "Test this PC", which times each on
-  the real screens at their refresh rate (`/autotune`, in a child process) and recommends the highest that keeps up
+  the real screens at their refresh rate (`/autotune`, in a child process) and recommends the highest that keeps up,
+  says what pipes it tested with, and measures an all-metal worst case for reflections
+- Main monitor only (the other monitors black: a third of the work on three screens), and an "On battery" quality
+  ceiling for laptops
+- Ultra redefined as High plus traced reflections at 4× MSAA, after measuring that 8× cost more than the reflections

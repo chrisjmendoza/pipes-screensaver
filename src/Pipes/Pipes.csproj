@@ -17,7 +17,7 @@
 
     <!-- Release metadata: shows in the file's Properties > Details in Explorer. Bump Version with each GitHub release
          (and the matching heading in CHANGELOG.md); the release's git tag is "v" + Version. -->
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Product>Pipes</Product>
     <Description>Pipes screensaver</Description>
     <Copyright>Copyright (c) 2026 Chris Mendoza</Copyright>
