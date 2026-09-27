@@ -10,6 +10,12 @@ attached.
 
 Changes merged to `main` since the last release go here, and move under a new version heading when it's released.
 
+## [1.1.0] - 2026-09-26
+
+The performance release: see how the screensaver is doing, pick a quality in one click, let it test your PC, and
+run it on one monitor or hold it down on battery. Ultra got cheaper too. No change to the pipes themselves apart
+from satin plastic.
+
 ### Added
 
 - **Main monitor only** (Animation group, next to "Own scene on each monitor", off by default): with several
@@ -175,5 +181,6 @@ Windows 10 or 11 without installing anything, and the file carries its version i
   core while waiting for VSync: CPU use dropped from as much as a full core to a steady 7-15% at 60 fps.
   (docs/ARCHITECTURE.md, "Frame pacing: sleeping, not spinning")
 
-[Unreleased]: https://github.com/chrisjmendoza/pipes-screensaver/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/chrisjmendoza/pipes-screensaver/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/chrisjmendoza/pipes-screensaver/releases/tag/v1.1.0
 [1.0.0]: https://github.com/chrisjmendoza/pipes-screensaver/releases/tag/v1.0.0
