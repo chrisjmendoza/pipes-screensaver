@@ -102,6 +102,24 @@ internal sealed class AutotuneResultsForm : Form
         layout.Controls.Add(ResultsTable(report));
         var screens = report.ViewCount == 1 ? "" : $" ({report.ViewCount} scenes, one per monitor)";
         layout.Controls.Add(Paragraph($"Tested on: {report.Renderer}, {report.Width}×{report.Height}{screens}."));
+        layout.Controls.Add(Paragraph($"Tested with {report.TestedWith}. Other pipes cost differently: metal pipes " +
+            "with traced reflections cost the most."));
+        // The all-metal row, when there is one: what it means, and whether the Metallic finish would still keep up.
+        if (report.Results.Find(r => r.Variant != null) is { } worst)
+        {
+            layout.Controls.Add(Paragraph(worst.Verdict switch
+            {
+                AutotuneVerdict.Comfortable =>
+                    $"The \"all metal\" row is {worst.Preset} on scenes where every pipe is metal, the worst case for " +
+                    "reflections. It still keeps up, so any finish will.",
+                AutotuneVerdict.Tight =>
+                    $"The \"all metal\" row is {worst.Preset} on scenes where every pipe is metal, the worst case for " +
+                    "reflections. It keeps up with little to spare, so the Metallic finish may stutter at that quality.",
+                _ =>
+                    $"The \"all metal\" row is {worst.Preset} on scenes where every pipe is metal, the worst case for " +
+                    "reflections. It's too slow, so with the Metallic finish pick the quality below it.",
+            }));
+        }
         if (Autotune.LooksIntegratedOrSoftware(report.Renderer))
         {
             layout.Controls.Add(Paragraph(
@@ -149,17 +167,12 @@ internal sealed class AutotuneResultsForm : Form
         foreach (var preset in Enum.GetValues<QualityPreset>())
         {
             var bold = preset == report.Recommended;
-            if (report.Results.Find(r => r.Preset == preset) is { } r)
+            if (report.Results.Find(r => r.Preset == preset && r.Variant == null) is { } r)
             {
                 Cell(preset.ToString(), 0, bold);
                 Cell($"{r.P90Ms:F1} ms", 1, bold, right: true);
                 Cell($"{1000 / r.P90Ms:F0}", 2, bold, right: true);
-                Cell(r.Verdict switch
-                {
-                    AutotuneVerdict.Comfortable => "✓",
-                    AutotuneVerdict.Tight => "✓ little to spare",
-                    _ => "too slow",
-                }, 3, bold);
+                Cell(VerdictText(r.Verdict), 3, bold);
             }
             else
             {
@@ -169,12 +182,27 @@ internal sealed class AutotuneResultsForm : Form
                 Cell("not tried", 3);
             }
         }
+        // The worst-case row(s) last, under the presets they repeat.
+        foreach (var r in report.Results.Where(r => r.Variant != null))
+        {
+            Cell($"{r.Preset}, {r.Variant}", 0);
+            Cell($"{r.P90Ms:F1} ms", 1, right: true);
+            Cell($"{1000 / r.P90Ms:F0}", 2, right: true);
+            Cell(VerdictText(r.Verdict), 3);
+        }
 
         var wrapper = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Margin = Padding.Empty };
         wrapper.Controls.Add(table);
         wrapper.Controls.Add(Paragraph("* Nine frames in ten took this long or less."));
         return wrapper;
     }
+
+    private static string VerdictText(AutotuneVerdict verdict) => verdict switch
+    {
+        AutotuneVerdict.Comfortable => "✓",
+        AutotuneVerdict.Tight => "✓ little to spare",
+        _ => "too slow",
+    };
 
     private Label Paragraph(string text, bool bold = false)
     {

@@ -307,7 +307,8 @@ internal sealed unsafe class GLHost : IDisposable
     /// <para>
     /// It measures what the screensaver will actually draw: the whole desktop, one view per monitor if
     /// <see cref="PipesSettings.SeparateMonitors"/> is on (as fullscreen does), with the user's own pipe and camera
-    /// settings. Only the graphics settings change from preset to preset.
+    /// settings. Only the graphics settings change from preset to preset. One extra row measures the worst case for
+    /// traced reflections: the heaviest preset that has them and still held the refresh, on all-metal scenes.
     /// </para>
     /// <para>
     /// The scenes are simulated once, then each preset draws <em>the same</em> scenes, so the presets are compared
@@ -344,6 +345,33 @@ internal sealed unsafe class GLHost : IDisposable
         }
 
         var results = new List<AutotuneResult>();
+
+        // Warm up, then time about a second of frames with the renderers now in place; record and return the result.
+        AutotuneResult Measure(QualityPreset preset, string? variant, double warmUp)
+        {
+            var clock = Stopwatch.StartNew();
+            for (var i = 0; i < 10 || clock.Elapsed.TotalSeconds < warmUp; i++) Frame();
+
+            var frameTimes = new List<double>();
+            clock.Restart();
+            while (frameTimes.Count < Pipes.Autotune.MinMeasuredFrames || clock.Elapsed.TotalSeconds < Pipes.Autotune.MeasureSeconds)
+            {
+                var start = clock.Elapsed.TotalMilliseconds;
+                Frame();
+                frameTimes.Add(clock.Elapsed.TotalMilliseconds - start);
+                // On a very slow machine (software rendering, say), a clear failure needn't be timed precisely:
+                // once 15 frames have all taken more than twice the target, stop, rather than spend a minute
+                // measuring it.
+                if (frameTimes.Count >= 15 && frameTimes.Min() > 2 * targetMs) break;
+            }
+
+            var p90 = Pipes.Autotune.Percentile(frameTimes, Pipes.Autotune.JudgedPercentile);
+            var result = new AutotuneResult(preset, Math.Round(frameTimes.Average(), 3), Math.Round(p90, 3),
+                Pipes.Autotune.Judge(p90, targetMs, budgetMs), variant);
+            results.Add(result);
+            return result;
+        }
+
         try
         {
             foreach (var preset in Enum.GetValues<QualityPreset>())
@@ -353,29 +381,29 @@ internal sealed unsafe class GLHost : IDisposable
                 foreach (var view in views) view.ReplaceRenderer(new PipeRenderer(_gl, options));
 
                 var warmUp = results.Count == 0 ? Pipes.Autotune.FirstWarmUpSeconds : Pipes.Autotune.LaterWarmUpSeconds;
-                var clock = Stopwatch.StartNew();
-                for (var i = 0; i < 10 || clock.Elapsed.TotalSeconds < warmUp; i++) Frame();
-
-                var frameTimes = new List<double>();
-                clock.Restart();
-                while (frameTimes.Count < Pipes.Autotune.MinMeasuredFrames || clock.Elapsed.TotalSeconds < Pipes.Autotune.MeasureSeconds)
-                {
-                    var start = clock.Elapsed.TotalMilliseconds;
-                    Frame();
-                    frameTimes.Add(clock.Elapsed.TotalMilliseconds - start);
-                    // On a very slow machine (software rendering, say), a clear failure needn't be timed precisely:
-                    // once 15 frames have all taken more than twice the target, stop, rather than spend a minute
-                    // measuring it.
-                    if (frameTimes.Count >= 15 && frameTimes.Min() > 2 * targetMs) break;
-                }
-
-                var p90 = Pipes.Autotune.Percentile(frameTimes, Pipes.Autotune.JudgedPercentile);
-                var verdict = Pipes.Autotune.Judge(p90, targetMs, budgetMs);
-                results.Add(new AutotuneResult(preset, Math.Round(frameTimes.Average(), 3), Math.Round(p90, 3), verdict));
+                var verdict = Measure(preset, null, warmUp).Verdict;
                 // The presets only get heavier from here, so the first that can't hold the refresh ends the test.
                 // Merely missing the headroom target doesn't: a preset that keeps up with little to spare is still
                 // worth knowing about, and the next one up may yet be comfortable on a faster part of the scene.
                 if (verdict == AutotuneVerdict.TooSlow) break;
+            }
+
+            // The worst case for traced reflections. Metal pipes fire a reflection ray on every pixel (paint only at
+            // grazing angles), so an all-metal scene is the dearest thing a preset with reflections can be asked to
+            // draw: 7% more than plastic with ball joints, up to 80% more in a tunnel of smooth elbows. A finish is the scene's business, not the
+            // renderer's, so unlike a preset it can't be swapped in: this builds fresh scenes with the Metallic
+            // finish (same seeds) for the heaviest reflecting preset that held the refresh. Skipped when the user's
+            // finish is already Metallic, since then the ordinary rows are the worst case.
+            var heaviestTraced = results.LastOrDefault(r =>
+                r.Verdict != AutotuneVerdict.TooSlow && QualityPresets.With(r.Preset, settings).TracedReflections);
+            if (heaviestTraced != null && settings.Finish != Finish.Metallic)
+            {
+                var metal = QualityPresets.With(heaviestTraced.Preset, settings);
+                metal.Finish = Finish.Metallic;
+                foreach (var view in views) view.Dispose();
+                views = CreateViews(metal, width, height, true, i => new Random(1 + i));
+                SimulateForAutotune(views, metal.Camera == CameraMotion.FlyThrough);
+                Measure(heaviestTraced.Preset, "all metal", Pipes.Autotune.LaterWarmUpSeconds);
             }
         }
         finally
@@ -387,11 +415,39 @@ internal sealed unsafe class GLHost : IDisposable
 
         // The highest preset with room to spare (they're tried lightest first). Failing that, the highest that still
         // holds the refresh, even if barely. If even Lite can't, it's still the lightest there is, so recommend it.
-        var recommended = (results.LastOrDefault(r => r.Verdict == AutotuneVerdict.Comfortable)
-            ?? results.LastOrDefault(r => r.Verdict == AutotuneVerdict.Tight))?.Preset ?? QualityPreset.Lite;
+        // Judged on the user's own pipes: the all-metal row is information, not the recommendation.
+        var own = results.Where(r => r.Variant == null).ToList();
+        var recommended = (own.LastOrDefault(r => r.Verdict == AutotuneVerdict.Comfortable)
+            ?? own.LastOrDefault(r => r.Verdict == AutotuneVerdict.Tight))?.Preset ?? QualityPreset.Lite;
         Pipes.Autotune.Write(new AutotuneReport(
             refreshHz, Math.Round(budgetMs, 3), Math.Round(targetMs, 3), drawnWidth, drawnHeight, views.Count,
-            _gl.GetStringS(StringName.Renderer) ?? "unknown", settings.Camera, simulated, results, recommended), resultPath);
+            _gl.GetStringS(StringName.Renderer) ?? "unknown", settings.Camera, DescribePipes(settings), simulated, results, recommended), resultPath);
+    }
+
+    /// <summary>The pipe and camera settings a test measured with, in words, for the results window.</summary>
+    private static string DescribePipes(PipesSettings s)
+    {
+        var finish = s.Finish switch
+        {
+            Finish.Plastic => "plastic",
+            Finish.Metallic => "metallic",
+            Finish.Weathered => "weathered",
+            _ => "mixed",
+        };
+        var joints = s.Joints switch
+        {
+            JointStyle.Classic => "ball joints",
+            JointStyle.Smooth => "smooth elbows",
+            _ => "mixed joints",
+        };
+        var camera = s.Camera switch
+        {
+            CameraMotion.FlyThrough => $"fly-through at {s.TunnelDensity * 10}% tunnel density",
+            CameraMotion.Still => "a still camera",
+            CameraMotion.Orbit => "an orbiting camera",
+            _ => "a floating camera",
+        };
+        return $"the {finish} finish, {joints} and {camera}";
     }
 
     /// <summary>

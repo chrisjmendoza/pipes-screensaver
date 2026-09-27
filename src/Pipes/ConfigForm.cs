@@ -23,7 +23,7 @@ internal sealed class ConfigForm : Form
     private readonly CheckBox _mainOnly = Check("Main monitor only (the others go black)");
 
     private readonly ComboBox _joints = Dropdown("Classic (ball joints)", "Smooth elbows", "Mixed");
-    private readonly ComboBox _finish = Dropdown("Glossy plastic", "Metallic", "Weathered (rust, patina, worn paint)", "Mixed (per pipe)");
+    private readonly ComboBox _finish = Dropdown("Plastic (glossy and satin)", "Metallic", "Weathered (rust, patina, worn paint)", "Mixed (per pipe)");
     private readonly CheckBox _thickness = Check("Vary pipe thickness");
     private readonly CheckBox _fittings = Check("Valves, couplings, flanges and junctions");
     private readonly CheckBox _teapots = Check("Rare teapots (like the original)");
@@ -36,7 +36,7 @@ internal sealed class ConfigForm : Form
     private readonly ComboBox _batteryQuality = Dropdown("Don't change", "Lite", "Low", "Medium", "High", "Ultra");
     private readonly ComboBox _style = Dropdown("Modern", "Classic (lite, like the original)");
     private readonly ComboBox _aa = Dropdown("Off", "2x", "4x", "8x");
-    private readonly CheckBox _surfaces = Check("Surface detail (grime, scratches, rust; off = flat)");
+    private readonly CheckBox _surfaces = Check("Surface detail (grain, scratches, rust; subtle on plain paint)");
     private readonly CheckBox _shadows = Check("Shadows (pipes shade the pipes behind them)");
     private readonly CheckBox _movingLight = Check("Moving light (shadows sweep slowly)");
     private readonly CheckBox _traced = Check("Traced reflections (metal pipes mirror nearby pipes)");
